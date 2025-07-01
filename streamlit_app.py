@@ -563,7 +563,7 @@ def render_dashboard():
                     }
                 ))
                 fig_gauge.update_layout(height=250, margin=dict(l=20, r=20, t=40, b=20))
-                st.plotly_chart(fig_gauge, use_container_width=True)
+                st.plotly_chart(fig_gauge, use_container_width=True, key=f"gauge_{i}_{emp.nome.replace(' ', '_')}")
             
             with col2:
                 st.markdown("#### 🚨 Fatores de Risco Identificados")
@@ -579,7 +579,7 @@ def render_dashboard():
                         st.markdown(f"**{j}.** {acao}")
                 
                 # BOTÃO DE ANÁLISE DETALHADA
-                if st.button(f"🔍 Análise Detalhada", key=f"analise_{i}", use_container_width=True):
+                if st.button(f"🔍 Análise Detalhada", key=f"analise_detalhada_{i}_{emp.nome.replace(' ', '_')}", use_container_width=True):
                     st.markdown("#### 🔬 Breakdown Detalhado do Score")
                     
                     # Calcular cada componente
@@ -754,7 +754,7 @@ def render_export():
 def teste_algoritmo():
     st.markdown("### 🧪 Teste do Algoritmo ULTRA Rigoroso")
     
-    if st.button("🧪 Testar Caso do Vinicius"):
+    if st.button("🧪 Testar Caso do Vinicius", key="teste_vinicius_unique"):
         # Caso real do Vinicius
         funcionario_vinicius = Employee(
             nome="Vinicius Paschoa",
@@ -810,7 +810,7 @@ def teste_algoritmo():
             st.markdown(f"• {fator}")
     
     # Teste adicional
-    if st.button("🧪 Testar Caso Veterano Crítico"):
+    if st.button("🧪 Testar Caso Veterano Crítico", key="teste_veterano_unique"):
         funcionario_veterano = Employee(
             nome="Veterano Problemático", 
             departamento="TI",
