@@ -12,8 +12,18 @@ import base64
 import io
 import json
 from typing import Dict, List, Any, Optional
-import PyMuPDF  # fitz
-import openai
+# Imports opcionais com tratamento de erro
+try:
+    import fitz  # PyMuPDF
+    HAS_PDF_SUPPORT = True
+except ImportError:
+    HAS_PDF_SUPPORT = False
+
+try:
+    import openai
+    HAS_OPENAI = True
+except ImportError:
+    HAS_OPENAI = False
 from dataclasses import dataclass
 
 # ================================
@@ -83,6 +93,8 @@ def get_openai_key():
 
 def has_openai():
     """Verifica se OpenAI está configurada"""
+    if not HAS_OPENAI:
+        return False
     key = get_openai_key()
     return bool(key and key.strip())
 
@@ -323,8 +335,12 @@ def processar_planilha(df: pd.DataFrame) -> List[Employee]:
 
 def processar_pdf_linkedin(pdf_file, employee_name: str) -> Dict:
     """Processa PDF do LinkedIn e extrai informações relevantes"""
+    if not HAS_PDF_SUPPORT:
+        st.warning(f"⚠️ Processamento de PDF não disponível. Instale PyMuPDF para usar esta funcionalidade.")
+        return {}
+    
     try:
-        pdf_document = PyMuPDF.open(stream=pdf_file.read(), filetype="pdf")
+        pdf_document = fitz.open(stream=pdf_file.read(), filetype="pdf")
         text = ""
         
         for page_num in range(pdf_document.page_count):
@@ -510,7 +526,13 @@ def main():
         if has_openai():
             st.markdown('<div class="alert-success">✅ OpenAI Configurada</div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div class="alert-warning">⚠️ OpenAI não configurada<br><small>Funcionalidades de IA limitadas</small></div>', unsafe_allow_html=True)
+            if not HAS_OPENAI:
+                st.markdown('<div class="alert-warning">⚠️ OpenAI não instalada<br><small>Instale: pip install openai</small></div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="alert-warning">⚠️ OpenAI não configurada<br><small>Funcionalidades de IA limitadas</small></div>', unsafe_allow_html=True)
+        
+        if not HAS_PDF_SUPPORT:
+            st.markdown('<div class="alert-warning">⚠️ PDF não suportado<br><small>Instale: pip install PyMuPDF</small></div>', unsafe_allow_html=True)
         
         # Estatísticas rápidas
         if st.session_state.employees:
@@ -662,33 +684,37 @@ def render_upload_page():
     # Upload opcional de PDFs do LinkedIn
     st.markdown("---")
     st.markdown("#### 📄 PDFs do LinkedIn (Opcional)")
-    st.info("💡 Os PDFs do LinkedIn ajudam a melhorar a precisão da análise, mas são opcionais.")
     
-    linkedin_files = st.file_uploader(
-        "Selecione PDFs do LinkedIn",
-        type=['pdf'],
-        accept_multiple_files=True,
-        help="Exporte o perfil LinkedIn como PDF e faça upload aqui"
-    )
-    
-    if linkedin_files and st.session_state.employees:
-        for pdf_file in linkedin_files:
-            # Tentar associar PDF com colaborador pelo nome do arquivo
-            file_name = pdf_file.name.lower().replace('.pdf', '').replace('_', ' ').replace('-', ' ')
-            
-            # Buscar colaborador com nome similar
-            for employee in st.session_state.employees:
-                if any(name_part in file_name for name_part in employee.nome.lower().split()):
-                    linkedin_data = processar_pdf_linkedin(pdf_file, employee.nome)
-                    employee.linkedin_data = linkedin_data
-                    
-                    # Recalcular score com dados do LinkedIn
-                    employee.score_risco = calcular_score_risco(employee)
-                    employee.fatores_risco = identificar_fatores_risco(employee)
-                    employee.acoes_recomendadas = gerar_recomendacoes(employee.fatores_risco, employee)
-                    
-                    st.success(f"✅ PDF do LinkedIn processado para {employee.nome}")
-                    break
+    if not HAS_PDF_SUPPORT:
+        st.info("💡 Funcionalidade de PDF não disponível nesta versão. A análise funcionará apenas com os dados da planilha.")
+    else:
+        st.info("💡 Os PDFs do LinkedIn ajudam a melhorar a precisão da análise, mas são opcionais.")
+        
+        linkedin_files = st.file_uploader(
+            "Selecione PDFs do LinkedIn",
+            type=['pdf'],
+            accept_multiple_files=True,
+            help="Exporte o perfil LinkedIn como PDF e faça upload aqui"
+        )
+        
+        if linkedin_files and st.session_state.employees:
+            for pdf_file in linkedin_files:
+                # Tentar associar PDF com colaborador pelo nome do arquivo
+                file_name = pdf_file.name.lower().replace('.pdf', '').replace('_', ' ').replace('-', ' ')
+                
+                # Buscar colaborador com nome similar
+                for employee in st.session_state.employees:
+                    if any(name_part in file_name for name_part in employee.nome.lower().split()):
+                        linkedin_data = processar_pdf_linkedin(pdf_file, employee.nome)
+                        employee.linkedin_data = linkedin_data
+                        
+                        # Recalcular score com dados do LinkedIn
+                        employee.score_risco = calcular_score_risco(employee)
+                        employee.fatores_risco = identificar_fatores_risco(employee)
+                        employee.acoes_recomendadas = gerar_recomendacoes(employee.fatores_risco, employee)
+                        
+                        st.success(f"✅ PDF do LinkedIn processado para {employee.nome}")
+                        break
 
 def render_dashboard_page():
     """Página do dashboard"""
@@ -887,7 +913,7 @@ def render_analysis_page():
                         st.markdown(f"{i}. {acao}")
                 
                 # Usar OpenAI se disponível
-                if has_openai():
+                if has_openai() and HAS_OPENAI:
                     if st.button(f"🤖 Gerar Insights IA", key=f"ai_{i}"):
                         try:
                             openai.api_key = get_openai_key()
@@ -923,6 +949,10 @@ def render_analysis_page():
                             
                         except Exception as e:
                             st.error(f"Erro ao gerar insights: {str(e)}")
+                elif not HAS_OPENAI:
+                    st.info("💡 Instale a biblioteca OpenAI para usar insights de IA")
+                elif not has_openai():
+                    st.info("💡 Configure sua chave OpenAI nos Secrets para usar insights de IA")
 
 def render_export_page():
     """Página de exportação"""
