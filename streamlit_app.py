@@ -340,6 +340,8 @@ def processar_pdf_linkedin(pdf_file, employee_name: str) -> Dict:
         return {}
     
     try:
+        # Reset file pointer
+        pdf_file.seek(0)
         pdf_document = fitz.open(stream=pdf_file.read(), filetype="pdf")
         text = ""
         
@@ -349,33 +351,83 @@ def processar_pdf_linkedin(pdf_file, employee_name: str) -> Dict:
         
         pdf_document.close()
         
-        # Análise simples do texto (pode ser melhorada com NLP)
+        # Análise do texto extraído
         linkedin_data = {
             "ativo_recentemente": False,
             "mudancas_frequentes": False,
-            "certificacoes_recentes": False
+            "certificacoes_recentes": False,
+            "texto_extraido": len(text) > 0
         }
+        
+        if not text.strip():
+            st.warning(f"⚠️ Não foi possível extrair texto do PDF para {employee_name}")
+            return linkedin_data
         
         # Verificar atividade recente (buscar por datas recentes)
         current_year = datetime.now().year
-        if str(current_year) in text or str(current_year - 1) in text:
-            linkedin_data["ativo_recentemente"] = True
+        last_year = current_year - 1
         
-        # Verificar mudanças frequentes (contar empresas)
-        companies_indicators = text.lower().count("empresa") + text.lower().count("company")
-        if companies_indicators > 3:
+        # Buscar padrões de data mais robustos
+        year_patterns = [str(current_year), str(last_year), f"{current_year}", f"{last_year}"]
+        month_patterns = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
+                         "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+                         "jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
+        
+        text_lower = text.lower()
+        
+        # Verificar atividade recente
+        for year in year_patterns:
+            if year in text:
+                linkedin_data["ativo_recentemente"] = True
+                break
+        
+        # Verificar mudanças frequentes (contar indicadores de empresas/trabalhos)
+        work_indicators = [
+            "empresa", "company", "trabalho", "work", "emprego", "job",
+            "cargo", "position", "função", "role", "experiência", "experience"
+        ]
+        
+        work_count = 0
+        for indicator in work_indicators:
+            work_count += text_lower.count(indicator)
+        
+        # Se tem muitos indicadores de trabalho, pode indicar mudanças frequentes
+        if work_count > 10:
             linkedin_data["mudancas_frequentes"] = True
         
-        # Verificar certificações
-        cert_keywords = ["certificado", "certificate", "curso", "course", "training"]
-        if any(keyword in text.lower() for keyword in cert_keywords):
+        # Verificar certificações e cursos
+        cert_keywords = [
+            "certificado", "certificate", "certificação", "certification",
+            "curso", "course", "treinamento", "training", "capacitação",
+            "diploma", "formação", "education", "qualificação", "skill"
+        ]
+        
+        cert_count = 0
+        for keyword in cert_keywords:
+            cert_count += text_lower.count(keyword)
+        
+        if cert_count > 3:
             linkedin_data["certificacoes_recentes"] = True
+        
+        # Debug info (apenas em desenvolvimento)
+        linkedin_data["debug_info"] = {
+            "chars_extracted": len(text),
+            "work_indicators": work_count,
+            "cert_indicators": cert_count,
+            "has_current_year": str(current_year) in text,
+            "has_last_year": str(last_year) in text
+        }
         
         return linkedin_data
         
     except Exception as e:
-        st.warning(f"Erro ao processar PDF do LinkedIn para {employee_name}: {str(e)}")
-        return {}
+        st.error(f"Erro ao processar PDF do LinkedIn para {employee_name}: {str(e)}")
+        return {
+            "ativo_recentemente": False,
+            "mudancas_frequentes": False,
+            "certificacoes_recentes": False,
+            "erro": str(e)
+        }
 
 # ================================
 # FUNÇÕES DE EXPORTAÇÃO
@@ -681,6 +733,148 @@ def render_home_page():
                 st.rerun()
             else:
                 st.warning("Primeiro carregue seus dados!")
+    
+    # Seção adicional: Como obter PDF do LinkedIn
+    st.markdown("---")
+    with st.expander("📄 Como exportar seu perfil do LinkedIn como PDF"):
+        st.markdown("""
+        ### 📋 Passo a passo para exportar PDF do LinkedIn:
+        
+        1. **Acesse seu perfil** no LinkedIn
+        2. **Clique nos 3 pontos** ao lado do botão "Adicionar seção"
+        3. **Selecione "Salvar como PDF"**
+        4. **Renomeie o arquivo** com o nome do colaborador (ex: "João Silva.pdf")
+        5. **Faça upload** na página de Upload de Dados
+        
+        ### ⚡ Dicas importantes:
+        - Nomeie o arquivo PDF com o **nome exato** do colaborador da planilha
+        - O sistema detecta automaticamente: atividade recente, mudanças frequentes, certificações
+        - PDFs do LinkedIn são **opcionais** - o sistema funciona só com a planilha
+        - Dados do LinkedIn ajudam a **aumentar a precisão** da análise
+        
+        ### 🔒 Privacidade:
+        - Apenas use com **consentimento** dos colaboradores
+        - Dados são processados **localmente** e não armazenados
+        - Conforme **LGPD** e boas práticas de RH
+        """)
+    
+    # Status atual dos dados
+    if st.session_state.employees:
+        linkedin_count = len([e for e in st.session_state.employees if e.linkedin_data])
+        st.markdown("---")
+        st.markdown("### 📊 Status dos Dados Carregados")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Colaboradores na Planilha", len(st.session_state.employees))
+        with col2:
+            st.metric("Com dados do LinkedIn", linkedin_count, 
+                     delta=f"{(linkedin_count/len(st.session_state.employees)*100):.1f}%" if linkedin_count > 0 else None)
+    
+    with col2:
+        if st.button("📤 Fazer Upload", use_container_width=True):
+            st.session_state.current_page = "upload"
+            st.rerun()
+    
+    with col3:
+        if st.button("📊 Ver Dashboard", use_container_width=True):
+            if st.session_state.employees:
+                st.session_state.current_page = "dashboard"
+                st.rerun()
+            else:
+                st.warning("Primeiro carregue seus dados!")
+    
+    # Seção adicional: Como obter PDF do LinkedIn
+    st.markdown("---")
+    with st.expander("📄 Como exportar seu perfil do LinkedIn como PDF"):
+        st.markdown("""
+        ### 📋 Passo a passo para exportar PDF do LinkedIn:
+        
+        1. **Acesse seu perfil** no LinkedIn
+        2. **Clique nos 3 pontos** ao lado do botão "Adicionar seção"
+        3. **Selecione "Salvar como PDF"**
+        4. **Renomeie o arquivo** com o nome do colaborador (ex: "João Silva.pdf")
+        5. **Faça upload** na página de Upload de Dados
+        
+        ### ⚡ Dicas importantes:
+        - Nomeie o arquivo PDF com o **nome exato** do colaborador da planilha
+        - O sistema detecta automaticamente: atividade recente, mudanças frequentes, certificações
+        - PDFs do LinkedIn são **opcionais** - o sistema funciona só com a planilha
+        - Dados do LinkedIn ajudam a **aumentar a precisão** da análise
+        
+        ### 🔒 Privacidade:
+        - Apenas use com **consentimento** dos colaboradores
+        - Dados são processados **localmente** e não armazenados
+        - Conforme **LGPD** e boas práticas de RH
+        """)
+    
+    # Status atual dos dados
+    if st.session_state.employees:
+        linkedin_count = len([e for e in st.session_state.employees if e.linkedin_data])
+        st.markdown("---")
+        st.markdown("### 📊 Status dos Dados Carregados")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Colaboradores na Planilha", len(st.session_state.employees))
+        with col2:
+            st.metric("Com dados do LinkedIn", linkedin_count, 
+                     delta=f"{(linkedin_count/len(st.session_state.employees)*100):.1f}%" if linkedin_count > 0 else None)_ausencias': [
+                    8, 2, 1, 0, 12, 1, 6, 15, 2, 1
+                ]
+            }
+            
+            df_modelo = pd.DataFrame(modelo_data)
+            
+            # Criar arquivo Excel
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df_modelo.to_excel(writer, sheet_name='Dados_Colaboradores', index=False)
+                
+                # Adicionar uma aba com instruções
+                instrucoes = pd.DataFrame({
+                    'Coluna': ['nome', 'departamento', 'cargo', 'tempo_casa', 'participou_pdi', 'num_treinamentos', 'num_ausencias'],
+                    'Descrição': [
+                        'Nome completo do colaborador',
+                        'Departamento ou área de trabalho',
+                        'Cargo atual',
+                        'Tempo de casa em anos (ex: 1.5 para 1 ano e 6 meses)',
+                        'Participou de PDI nos últimos 12 meses (Sim/Não)',
+                        'Número de treinamentos realizados no último ano',
+                        'Número de faltas/ausências nos últimos 6 meses'
+                    ],
+                    'Exemplo': [
+                        'João Silva Santos',
+                        'Vendas',
+                        'Vendedor Sênior',
+                        '2.5',
+                        'Sim',
+                        '4',
+                        '2'
+                    ]
+                })
+                instrucoes.to_excel(writer, sheet_name='Instruções', index=False)
+            
+            st.download_button(
+                label="💾 Download Modelo.xlsx",
+                data=output.getvalue(),
+                file_name="modelo_radar_rh.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            st.success("✅ Planilha modelo criada! Use como base para seus dados.")
+    
+    with col2:
+        if st.button("📤 Fazer Upload", use_container_width=True):
+            st.session_state.current_page = "upload"
+            st.rerun()
+    
+    with col3:
+        if st.button("📊 Ver Dashboard", use_container_width=True):
+            if st.session_state.employees:
+                st.session_state.current_page = "dashboard"
+                st.rerun()
+            else:
+                st.warning("Primeiro carregue seus dados!")
 
 def render_upload_page():
     """Página de upload"""
@@ -738,33 +932,87 @@ def render_upload_page():
     if not HAS_PDF_SUPPORT:
         st.info("💡 Funcionalidade de PDF não disponível nesta versão. A análise funcionará apenas com os dados da planilha.")
     else:
-        st.info("💡 Os PDFs do LinkedIn ajudam a melhorar a precisão da análise, mas são opcionais.")
+        st.info("💡 Os PDFs do LinkedIn ajudam a melhorar a precisão da análise. Nomeie os arquivos com o nome do colaborador.")
         
         linkedin_files = st.file_uploader(
             "Selecione PDFs do LinkedIn",
             type=['pdf'],
             accept_multiple_files=True,
-            help="Exporte o perfil LinkedIn como PDF e faça upload aqui"
+            help="Exporte o perfil LinkedIn como PDF e nomeie o arquivo com o nome do colaborador"
         )
         
         if linkedin_files and st.session_state.employees:
+            st.markdown("#### 🔄 Processamento dos PDFs:")
+            
             for pdf_file in linkedin_files:
+                st.write(f"📄 Processando: {pdf_file.name}")
+                
                 # Tentar associar PDF com colaborador pelo nome do arquivo
-                file_name = pdf_file.name.lower().replace('.pdf', '').replace('_', ' ').replace('-', ' ')
+                file_name_clean = pdf_file.name.lower().replace('.pdf', '').replace('_', ' ').replace('-', ' ')
                 
                 # Buscar colaborador com nome similar
+                colaborador_encontrado = False
                 for employee in st.session_state.employees:
-                    if any(name_part in file_name for name_part in employee.nome.lower().split()):
+                    # Verificar se alguma parte do nome do colaborador está no nome do arquivo
+                    nome_parts = employee.nome.lower().split()
+                    if any(part in file_name_clean for part in nome_parts if len(part) > 2):
                         linkedin_data = processar_pdf_linkedin(pdf_file, employee.nome)
-                        employee.linkedin_data = linkedin_data
                         
-                        # Recalcular score com dados do LinkedIn
-                        employee.score_risco = calcular_score_risco(employee)
-                        employee.fatores_risco = identificar_fatores_risco(employee)
-                        employee.acoes_recomendadas = gerar_recomendacoes(employee.fatores_risco, employee)
-                        
-                        st.success(f"✅ PDF do LinkedIn processado para {employee.nome}")
-                        break
+                        if linkedin_data:  # Se conseguiu processar
+                            employee.linkedin_data = linkedin_data
+                            
+                            # Recalcular score com dados do LinkedIn
+                            old_score = employee.score_risco
+                            employee.score_risco = calcular_score_risco(employee)
+                            employee.fatores_risco = identificar_fatores_risco(employee)
+                            employee.acoes_recomendadas = gerar_recomendacoes(employee.fatores_risco, employee)
+                            
+                            # Mostrar resultado
+                            col1, col2 = st.columns([2, 1])
+                            with col1:
+                                st.success(f"✅ PDF processado para: **{employee.nome}**")
+                                
+                                # Mostrar insights do LinkedIn
+                                insights_linkedin = []
+                                if linkedin_data.get("ativo_recentemente"):
+                                    insights_linkedin.append("🔄 Perfil atualizado recentemente")
+                                if linkedin_data.get("mudancas_frequentes"):
+                                    insights_linkedin.append("🏢 Histórico de mudanças frequentes")
+                                if linkedin_data.get("certificacoes_recentes"):
+                                    insights_linkedin.append("🎓 Certificações recentes")
+                                
+                                if insights_linkedin:
+                                    st.write("**Insights do LinkedIn:**")
+                                    for insight in insights_linkedin:
+                                        st.write(f"  • {insight}")
+                                else:
+                                    st.write("• Nenhum sinal de risco detectado no LinkedIn")
+                            
+                            with col2:
+                                if old_score != employee.score_risco:
+                                    delta = employee.score_risco - old_score
+                                    if delta > 0:
+                                        st.warning(f"Score alterado: {old_score:.1f} → {employee.score_risco:.1f} (+{delta:.1f})")
+                                    else:
+                                        st.info(f"Score: {employee.score_risco:.1f}")
+                                else:
+                                    st.info(f"Score mantido: {employee.score_risco:.1f}")
+                            
+                            colaborador_encontrado = True
+                            break
+                
+                if not colaborador_encontrado:
+                    st.warning(f"⚠️ Não foi possível associar '{pdf_file.name}' a nenhum colaborador.")
+                    st.write("💡 Certifique-se de que o nome do arquivo contém parte do nome do colaborador.")
+                
+                st.markdown("---")
+            
+            # Resumo final
+            linkedin_processed = len([e for e in st.session_state.employees if e.linkedin_data])
+            if linkedin_processed > 0:
+                st.success(f"🎉 {linkedin_processed} de {len(st.session_state.employees)} colaboradores têm dados do LinkedIn processados!")
+            else:
+                st.info("💡 Nenhum PDF foi associado aos colaboradores. Verifique os nomes dos arquivos.")
 
 def render_dashboard_page():
     """Página do dashboard"""
@@ -947,7 +1195,7 @@ def render_analysis_page():
                     }
                 ))
                 fig_gauge.update_layout(height=200, margin=dict(l=20, r=20, t=40, b=20))
-                st.plotly_chart(fig_gauge, use_container_width=True)
+                st.plotly_chart(fig_gauge, use_container_width=True, key=f"gauge_{i}_{emp.nome}")
             
             with col2:
                 st.markdown("#### 🚨 Fatores de Risco")
