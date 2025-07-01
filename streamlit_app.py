@@ -650,76 +650,7 @@ def render_home_page():
     
     with col1:
         if st.button("📥 Baixar Planilha Modelo", use_container_width=True):
-            # Criar planilha modelo realista
-            modelo_data = {
-                'nome': [
-                    'João Silva Santos', 'Maria Oliveira Costa', 'Pedro Henrique Lima',
-                    'Ana Carolina Souza', 'Lucas Fernando Alves', 'Juliana Mendes Pereira',
-                    'Rafael Santos Cruz', 'Camila Rodrigues Ferreira', 'Diego Machado Dias',
-                    'Fernanda Lima Cardoso'
-                ],
-                'departamento': [
-                    'Vendas', 'Marketing', 'TI', 'RH', 'Financeiro',
-                    'Operações', 'Vendas', 'Marketing', 'TI', 'RH'
-                ],
-                'cargo': [
-                    'Vendedor Sênior', 'Analista de Marketing', 'Desenvolvedor Jr',
-                    'Analista de RH', 'Assistente Financeiro', 'Coordenador de Operações',
-                    'Vendedor Pleno', 'Assistente de Marketing', 'Analista de Sistemas',
-                    'Generalista de RH'
-                ],
-                'tempo_casa': [
-                    0.3, 2.5, 1.2, 4.1, 0.8, 3.2, 1.8, 0.5, 2.1, 6.3
-                ],
-                'participou_pdi': [
-                    'Não', 'Sim', 'Sim', 'Sim', 'Não', 'Sim', 'Não', 'Não', 'Sim', 'Sim'
-                ],
-                'num_treinamentos': [
-                    0, 4, 2, 6, 1, 5, 1, 0, 3, 8
-                ],
-                'num_ausencias': [
-                    8, 2, 1, 0, 12, 1, 6, 15, 2, 1
-                ]
-            }
-            
-            df_modelo = pd.DataFrame(modelo_data)
-            
-            # Criar arquivo Excel
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_modelo.to_excel(writer, sheet_name='Dados_Colaboradores', index=False)
-                
-                # Adicionar uma aba com instruções
-                instrucoes = pd.DataFrame({
-                    'Coluna': ['nome', 'departamento', 'cargo', 'tempo_casa', 'participou_pdi', 'num_treinamentos', 'num_ausencias'],
-                    'Descrição': [
-                        'Nome completo do colaborador',
-                        'Departamento ou área de trabalho',
-                        'Cargo atual',
-                        'Tempo de casa em anos (ex: 1.5 para 1 ano e 6 meses)',
-                        'Participou de PDI nos últimos 12 meses (Sim/Não)',
-                        'Número de treinamentos realizados no último ano',
-                        'Número de faltas/ausências nos últimos 6 meses'
-                    ],
-                    'Exemplo': [
-                        'João Silva Santos',
-                        'Vendas',
-                        'Vendedor Sênior',
-                        '2.5',
-                        'Sim',
-                        '4',
-                        '2'
-                    ]
-                })
-                instrucoes.to_excel(writer, sheet_name='Instruções', index=False)
-            
-            st.download_button(
-                label="💾 Download Modelo.xlsx",
-                data=output.getvalue(),
-                file_name="modelo_radar_rh.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            st.success("✅ Planilha modelo criada! Use como base para seus dados.")
+            st.info("💡 Use o arquivo CSV que foi fornecido anteriormente como modelo, ou crie uma planilha Excel com as colunas: nome, departamento, cargo, tempo_casa, participou_pdi, num_treinamentos, num_ausencias")
     
     with col2:
         if st.button("📤 Fazer Upload", use_container_width=True):
