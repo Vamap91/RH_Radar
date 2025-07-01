@@ -55,8 +55,8 @@ SCORING_CONFIG = {
     "ausencias_critico": 5,       # VOLTOU para 5 - mais rigoroso
     "ausencias_grave": 10,        # Novo threshold para casos graves
     
-    "risco_baixo": 25,            
-    "risco_medio": 55,            
+    "risco_baixo": 20,            # Mais rigoroso
+    "risco_medio": 45,            # Mais rigoroso  
     "risco_alto": 100
 }
 
