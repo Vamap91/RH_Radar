@@ -819,7 +819,7 @@ def render_home_page():
             st.metric("Colaboradores na Planilha", len(st.session_state.employees))
         with col2:
             st.metric("Com dados do LinkedIn", linkedin_count, 
-                     delta=f"{(linkedin_count/len(st.session_state.employees)*100):.1f}%" if linkedin_count > 0 else None)_ausencias': [
+                     delta=f"{(linkedin_count/len(st.session_state.employees)*100):.1f}%" if linkedin_count > 0 else None)
                     8, 2, 1, 0, 12, 1, 6, 15, 2, 1
                 ]
             }
