@@ -1,6 +1,6 @@
 """
 🎯 Radar RH - Sistema Simplificado (Apenas Excel)
-Versão focada em análise direta via planilha Excel
+Análise de risco baseada exclusivamente em dados de planilha
 """
 
 import streamlit as st
@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 import io
 import json
-from typing import Dict, List, Any, Optional
+from typing import List
 from dataclasses import dataclass
 
 # ================================
@@ -24,11 +24,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Configurações de scoring SIMPLIFICADAS (sem LinkedIn)
+# Configurações de scoring SIMPLIFICADAS (apenas Excel)
 SCORING_CONFIG = {
     "peso_tempo_casa": 0.25,     # 25%
-    "peso_pdi": 0.30,           # 30% (aumentado)
-    "peso_treinamentos": 0.25,   # 25% (aumentado)
+    "peso_pdi": 0.30,           # 30% 
+    "peso_treinamentos": 0.25,   # 25%
     "peso_ausencias": 0.20,      # 20%
     "tempo_casa_critico": 0.5,
     "treinamentos_minimo": 2,
@@ -71,8 +71,7 @@ class Employee:
 
 def calcular_score_risco(employee: Employee) -> float:
     """
-    🎯 Cálculo de score SIMPLIFICADO (apenas dados Excel)
-    Foco total nos 4 indicadores principais
+    🎯 Cálculo de score baseado APENAS em dados Excel
     """
     score = 0
     
@@ -80,30 +79,30 @@ def calcular_score_risco(employee: Employee) -> float:
     # 1. FATOR TEMPO DE CASA (Peso: 25%)
     # ================================
     if employee.tempo_casa < 0.5:  # < 6 meses
-        score += 15 * SCORING_CONFIG["peso_tempo_casa"]  # Risco moderado
+        score += 15 * SCORING_CONFIG["peso_tempo_casa"]
     elif employee.tempo_casa < 1:  # 6-12 meses
-        score += 35 * SCORING_CONFIG["peso_tempo_casa"]  # Risco alto
+        score += 35 * SCORING_CONFIG["peso_tempo_casa"]
     elif employee.tempo_casa < 2:  # 1-2 anos
-        score += 20 * SCORING_CONFIG["peso_tempo_casa"]  # Risco baixo
-    # Sem penalização para veteranos
+        score += 20 * SCORING_CONFIG["peso_tempo_casa"]
+    # Veteranos: sem penalização por tempo
     
     # ================================
-    # 2. FATOR PDI (Peso: 30%) - PESO AUMENTADO
+    # 2. FATOR PDI (Peso: 30%)
     # ================================
     if not employee.participou_pdi:
-        if employee.tempo_casa < 0.5:  # Novatos - tolerante
+        if employee.tempo_casa < 0.5:
             score += 15 * SCORING_CONFIG["peso_pdi"]
-        elif employee.tempo_casa < 1:  # 6-12 meses
+        elif employee.tempo_casa < 1:
             score += 50 * SCORING_CONFIG["peso_pdi"]
-        elif employee.tempo_casa < 3:  # 1-3 anos
+        elif employee.tempo_casa < 3:
             score += 75 * SCORING_CONFIG["peso_pdi"]
-        else:  # Veteranos (3+ anos) - CRÍTICO
+        else:  # Veteranos 3+ anos
             score += 100 * SCORING_CONFIG["peso_pdi"]  # 30 pontos!
     
     # ================================
-    # 3. FATOR TREINAMENTOS (Peso: 25%) - PESO AUMENTADO
+    # 3. FATOR TREINAMENTOS (Peso: 25%)
     # ================================
-    if employee.tempo_casa >= 1:  # Para quem tem mais de 1 ano
+    if employee.tempo_casa >= 1:  # Veteranos
         if employee.num_treinamentos == 0:
             score += 100 * SCORING_CONFIG["peso_treinamentos"]  # 25 pontos!
         elif employee.num_treinamentos == 1:
@@ -112,7 +111,7 @@ def calcular_score_risco(employee: Employee) -> float:
             score += 50 * SCORING_CONFIG["peso_treinamentos"]
         elif employee.num_treinamentos < 5:
             score += 25 * SCORING_CONFIG["peso_treinamentos"]
-    else:  # Novatos - mais tolerante
+    else:  # Novatos
         if employee.num_treinamentos == 0:
             score += 40 * SCORING_CONFIG["peso_treinamentos"]
         elif employee.num_treinamentos < 2:
@@ -122,34 +121,33 @@ def calcular_score_risco(employee: Employee) -> float:
     # 4. FATOR AUSÊNCIAS (Peso: 20%)
     # ================================
     if employee.num_ausencias <= 2:
-        score += 5 * SCORING_CONFIG["peso_ausencias"]   # Ótimo
+        score += 5 * SCORING_CONFIG["peso_ausencias"]
     elif employee.num_ausencias <= 5:
-        score += 30 * SCORING_CONFIG["peso_ausencias"]  # Aceitável
+        score += 30 * SCORING_CONFIG["peso_ausencias"]
     elif employee.num_ausencias <= 10:
-        score += 60 * SCORING_CONFIG["peso_ausencias"]  # Preocupante
+        score += 60 * SCORING_CONFIG["peso_ausencias"]
     elif employee.num_ausencias <= 20:
-        score += 85 * SCORING_CONFIG["peso_ausencias"]  # Grave
+        score += 85 * SCORING_CONFIG["peso_ausencias"]
     else:  # 20+ ausências
-        score += 100 * SCORING_CONFIG["peso_ausencias"] # Crítico
+        score += 100 * SCORING_CONFIG["peso_ausencias"]
         
-        # BÔNUS EXTRA para casos extremos
+        # Bônus para casos extremos
         if employee.num_ausencias >= 50:
-            score += 15  # +15 pontos extras!
+            score += 15  # +15 pontos extras
     
     # ================================
-    # 5. BÔNUS DE COMBINAÇÃO CRÍTICA
+    # 5. BÔNUS COMBINAÇÃO CRÍTICA
     # ================================
-    # Veterano + sem PDI + poucos treinos + muitas ausências
     if (employee.tempo_casa >= 2 and 
         not employee.participou_pdi and 
         employee.num_treinamentos <= 1 and 
         employee.num_ausencias >= 20):
-        score += 20  # BÔNUS CRÍTICO
+        score += 20  # Bônus crítico
     
     return min(score, 100)
 
 def identificar_fatores_risco(employee: Employee) -> List[str]:
-    """Identifica fatores de risco (versão simplificada)"""
+    """Identifica fatores de risco baseado apenas nos dados Excel"""
     fatores = []
     
     # Tempo de casa
@@ -160,10 +158,10 @@ def identificar_fatores_risco(employee: Employee) -> List[str]:
     elif employee.tempo_casa < 2:
         fatores.append("📝 Tempo de casa baixo (< 2 anos)")
     
-    # PDI - Mais rigoroso para veteranos
+    # PDI
     if not employee.participou_pdi:
         if employee.tempo_casa >= 3:
-            fatores.append("🚨 CRÍTICO: Veterano sem PDI (inaceitável)")
+            fatores.append("🚨 CRÍTICO: Veterano sem PDI")
         elif employee.tempo_casa >= 1:
             fatores.append("⚠️ Sem PDI nos últimos 12 meses")
         else:
@@ -172,14 +170,14 @@ def identificar_fatores_risco(employee: Employee) -> List[str]:
     # Treinamentos
     if employee.tempo_casa >= 1:
         if employee.num_treinamentos == 0:
-            fatores.append("🚨 CRÍTICO: Zero treinamentos (inaceitável)")
+            fatores.append("🚨 CRÍTICO: Zero treinamentos")
         elif employee.num_treinamentos == 1:
-            fatores.append("⚠️ Apenas 1 treinamento realizado")
+            fatores.append("⚠️ Apenas 1 treinamento")
         elif employee.num_treinamentos < 3:
             fatores.append(f"📚 Poucos treinamentos ({employee.num_treinamentos})")
     else:
         if employee.num_treinamentos == 0:
-            fatores.append("📚 Sem treinamentos ainda (novato)")
+            fatores.append("📚 Sem treinamentos (novato)")
     
     # Ausências
     if employee.num_ausencias >= 50:
@@ -201,10 +199,10 @@ def identificar_fatores_risco(employee: Employee) -> List[str]:
     return fatores
 
 def gerar_recomendacoes(fatores_risco: List[str], employee: Employee) -> List[str]:
-    """Gera recomendações (versão simplificada)"""
+    """Gera recomendações baseadas apenas nos dados Excel"""
     recomendacoes = []
     
-    # Para casos críticos
+    # Casos críticos
     if "CRÍTICO" in str(fatores_risco):
         recomendacoes.append("🚨 URGENTE: Reunião imediata com RH")
         recomendacoes.append("📋 Plano de ação em 48h")
@@ -373,7 +371,7 @@ def create_risk_chart(employees: List[Employee]):
         level = get_risk_level(emp.score_risco)
         risk_counts[level] += 1
     
-    fig = go.Figure(data=[go.Pie(
+            fig = go.Figure(data=[go.Pie(
         labels=list(risk_counts.keys()),
         values=list(risk_counts.values()),
         hole=.3,
@@ -381,7 +379,7 @@ def create_risk_chart(employees: List[Employee]):
     )])
     
     fig.update_layout(
-        title="Distribuição de Risco - Análise Simplificada",
+        title="Distribuição de Risco - Análise Excel",
         title_x=0.5,
         height=400
     )
@@ -468,9 +466,9 @@ def main():
     # Header
     st.markdown("""
     <div class="custom-header">
-        <h1>🎯 Radar RH - Versão Simplificada</h1>
-        <p>Análise de Risco baseada apenas em dados Excel</p>
-        <p><small>📊 Foco: Tempo Casa | PDI | Treinamentos | Ausências</small></p>
+        <h1>🎯 Radar RH - Versão Excel</h1>
+        <p>Análise de Risco baseada exclusivamente em dados Excel</p>
+        <p><small>📊 4 Indicadores: Tempo Casa | PDI | Treinamentos | Ausências</small></p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -507,9 +505,9 @@ def render_home():
     
     with col1:
         st.markdown("""
-        ### 🎯 Análise Simplificada de Risco
+        ### 🎯 Análise Baseada Apenas em Excel
         
-        **Sistema focado em 4 indicadores principais:**
+        **Sistema focado em 4 indicadores essenciais do RH:**
         
         #### 📊 Indicadores Analisados:
         - **⏰ Tempo de Casa** (25%): Estabilidade na empresa
@@ -518,7 +516,7 @@ def render_home():
         - **📅 Ausências** (20%): Frequência e pontualidade
         
         #### 🚀 Como Usar:
-        1. **Prepare** planilha Excel com as 7 colunas obrigatórias
+        1. **Prepare** planilha Excel com 7 colunas obrigatórias
         2. **Faça upload** na aba "Upload Excel"
         3. **Visualize** resultados no Dashboard
         4. **Exporte** relatório final
@@ -527,6 +525,12 @@ def render_home():
         - **Baixo**: 0-20 pontos (✅ Seguro)
         - **Médio**: 21-45 pontos (⚠️ Atenção)
         - **Alto**: 46+ pontos (🚨 Ação urgente)
+        
+        #### ✅ Vantagens da Versão Excel:
+        - **Simples**: Sem configurações complexas
+        - **Prático**: Dados que RH já possui
+        - **Direto**: Resultados imediatos
+        - **Preciso**: Algoritmo rigoroso
         """)
     
     with col2:
