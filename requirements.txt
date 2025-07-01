@@ -1,12 +1,6 @@
-# Dependências essenciais
 streamlit>=1.28.0
 pandas>=2.0.0
 plotly>=5.15.0
 openpyxl>=3.1.0
-
-# Dependências opcionais (podem falhar sem quebrar o app)
-# PyMuPDF>=1.23.0  # Para processar PDFs do LinkedIn
-# openai>=1.3.0    # Para insights de IA
-
-# Alternativas mais leves se houver problemas
-# fitz-python>=1.23.0  # Alternativa ao PyMuPDF
+openai>=1.3.0
+PyMuPDF>=1.23.0
