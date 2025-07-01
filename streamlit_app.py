@@ -40,11 +40,11 @@ st.set_page_config(
 
 # Configurações de scoring rebalanceadas
 SCORING_CONFIG = {
-    "peso_tempo_casa": 0.35,      # Aumentado - é o fator mais importante
-    "peso_pdi": 0.15,             # Diminuído - PDI depende do tempo de casa
-    "peso_treinamentos": 0.15,    # Diminuído - também depende do tempo
-    "peso_linkedin": 0.25,        # Mantido - indicador forte quando disponível
-    "peso_ausencias": 0.10,       # Diminuído - menos peso para ausências
+    "peso_tempo_casa": 0.30,      # Diminuído um pouco
+    "peso_pdi": 0.15,             # Mantido
+    "peso_treinamentos": 0.15,    # Mantido
+    "peso_linkedin": 0.20,        # Diminuído
+    "peso_ausencias": 0.20,       # AUMENTADO - ausências são críticas
     
     # Thresholds mais realistas
     "tempo_casa_critico": 0.25,   # 3 meses (muito crítico)
@@ -52,10 +52,11 @@ SCORING_CONFIG = {
     "tempo_casa_estavel": 2.0,    # 2 anos (considerado estável)
     
     "treinamentos_minimo": 1,     # Mais realista
-    "ausencias_critico": 8,       # Mais tolerante
+    "ausencias_critico": 5,       # VOLTOU para 5 - mais rigoroso
+    "ausencias_grave": 10,        # Novo threshold para casos graves
     
-    "risco_baixo": 25,            # Ajustado para baixo
-    "risco_medio": 55,            # Ajustado para baixo
+    "risco_baixo": 25,            
+    "risco_medio": 55,            
     "risco_alto": 100
 }
 
@@ -227,11 +228,24 @@ def calcular_score_risco(employee: Employee) -> float:
     else:  # > 6 meses - começa a esperar treinamentos
         score += min(deficit_treinamentos * 20, 50) * SCORING_CONFIG["peso_treinamentos"]
     
-    # 4. FATOR AUSÊNCIAS (10% - proporcional)
-    if employee.num_ausencias > SCORING_CONFIG["ausencias_critico"]:
-        # Penalização proporcional ao excesso
-        excesso = employee.num_ausencias - SCORING_CONFIG["ausencias_critico"]
-        score += min(excesso * 10, 60) * SCORING_CONFIG["peso_ausencias"]
+    # 4. FATOR AUSÊNCIAS (20% - agora mais rigoroso e proporcional)
+    ausencias = employee.num_ausencias
+    
+    if ausencias == 0:
+        # Perfeito - sem penalização
+        pass
+    elif ausencias <= 2:
+        # Aceitável - penalização mínima
+        score += 10 * SCORING_CONFIG["peso_ausencias"]
+    elif ausencias <= SCORING_CONFIG["ausencias_critico"]:  # 3-5 ausências
+        # Preocupante - penalização moderada
+        score += 40 * SCORING_CONFIG["peso_ausencias"]
+    elif ausencias <= SCORING_CONFIG["ausencias_grave"]:  # 6-10 ausências
+        # Grave - penalização alta
+        score += 70 * SCORING_CONFIG["peso_ausencias"]
+    else:  # > 10 ausências
+        # Crítico - penalização máxima
+        score += 100 * SCORING_CONFIG["peso_ausencias"]
     
     # 5. FATOR LINKEDIN (25% - quando disponível)
     if employee.linkedin_data:
@@ -274,11 +288,20 @@ def identificar_fatores_risco(employee: Employee) -> List[str]:
             deficit = treinamentos_esperados - employee.num_treinamentos
             fatores.append(f"Déficit de treinamentos: {employee.num_treinamentos} realizados de {treinamentos_esperados} esperados")
     
-    # Ausências
-    if employee.num_ausencias > SCORING_CONFIG["ausencias_critico"]:
-        fatores.append(f"Ausências excessivas ({employee.num_ausencias} faltas - acima do limite de {SCORING_CONFIG['ausencias_critico']})")
-    elif employee.num_ausencias > 3:
-        fatores.append(f"Ausências moderadas ({employee.num_ausencias} faltas - monitorar)")
+    # Ausências - análise mais rigorosa
+    ausencias = employee.num_ausencias
+    
+    if ausencias == 0:
+        # Excelente comportamento
+        pass
+    elif ausencias <= 2:
+        fatores.append(f"Poucas ausências ({ausencias}) - dentro do aceitável")
+    elif ausencias <= SCORING_CONFIG["ausencias_critico"]:  # 3-5
+        fatores.append(f"Ausências moderadas ({ausencias} faltas) - requer atenção")
+    elif ausencias <= SCORING_CONFIG["ausencias_grave"]:  # 6-10
+        fatores.append(f"Ausências frequentes ({ausencias} faltas) - problema sério")
+    else:  # > 10
+        fatores.append(f"Ausências excessivas ({ausencias} faltas) - situação crítica que requer intervenção imediata")
     
     # LinkedIn
     if employee.linkedin_data:
@@ -297,32 +320,60 @@ def identificar_fatores_risco(employee: Employee) -> List[str]:
     return fatores
 
 def gerar_recomendacoes(fatores_risco: List[str], employee: Employee) -> List[str]:
-    """Gera recomendações de ação"""
+    """Gera recomendações de ação baseadas nos fatores de risco"""
     recomendacoes = []
     
-    if any("tempo de casa" in fator.lower() for fator in fatores_risco):
-        recomendacoes.append("Implementar programa de mentoria para novos colaboradores")
-        recomendacoes.append("Agendar check-ins regulares com gestor direto")
+    # Analisar fatores específicos
+    fatores_str = ' '.join(fatores_risco).lower()
     
+    # Recomendações para tempo de casa
+    if any("muito novo" in fator.lower() or "período crítico" in fator.lower() for fator in fatores_risco):
+        recomendacoes.append("URGENTE: Implementar programa de mentoria intensiva para novos colaboradores")
+        recomendacoes.append("Agendar check-ins semanais com gestor direto nos primeiros 90 dias")
+    elif any("período de risco" in fator.lower() for fator in fatores_risco):
+        recomendacoes.append("Intensificar acompanhamento com reuniões quinzenais")
+        recomendacoes.append("Avaliar satisfação e expectativas do colaborador")
+    
+    # Recomendações para PDI
     if any("pdi" in fator.lower() for fator in fatores_risco):
-        recomendacoes.append("Agendar reunião de PDI e definir metas de carreira")
-        recomendacoes.append("Criar plano de desenvolvimento individual")
+        if employee.tempo_casa >= 0.5:
+            recomendacoes.append("PRIORIDADE: Agendar reunião de PDI imediatamente")
+            recomendacoes.append("Definir plano de carreira claro com metas de curto prazo")
+        else:
+            recomendacoes.append("Agendar PDI para após completar 6 meses na empresa")
     
-    if any("treinamentos" in fator.lower() for fator in fatores_risco):
-        recomendacoes.append("Oferecer trilha de desenvolvimento personalizada")
-        recomendacoes.append("Inscrever em cursos relevantes para o cargo")
+    # Recomendações para treinamentos
+    if any("treinamentos" in fator.lower() or "déficit" in fator.lower() for fator in fatores_risco):
+        recomendacoes.append("Criar trilha de desenvolvimento técnico personalizada")
+        recomendacoes.append("Inscrever em cursos internos e externos relevantes para o cargo")
     
-    if any("ausências" in fator.lower() for fator in fatores_risco):
-        recomendacoes.append("Realizar conversa individual para entender causas")
-        recomendacoes.append("Avaliar necessidade de suporte adicional")
+    # Recomendações para ausências - MAIS ESPECÍFICAS
+    if employee.num_ausencias > 10:
+        recomendacoes.append("🚨 AÇÃO IMEDIATA: Reunião disciplinar formal com RH")
+        recomendacoes.append("🚨 Investigar causas das ausências e implementar plano de ação")
+        recomendacoes.append("🚨 Estabelecer acompanhamento diário da frequência")
+        recomendacoes.append("🚨 Avaliar necessidade de medidas disciplinares")
+    elif employee.num_ausencias > 5:
+        recomendacoes.append("⚠️ URGENTE: Conversa individual para entender causas das ausências")
+        recomendacoes.append("⚠️ Implementar plano de acompanhamento semanal da frequência")
+        recomendacoes.append("⚠️ Avaliar necessidade de suporte médico/pessoal")
+    elif employee.num_ausencias > 2:
+        recomendacoes.append("Monitorar padrão de ausências e conversar sobre expectativas")
+        recomendacoes.append("Verificar se há questões pessoais ou de saúde que a empresa pode apoiar")
     
+    # Recomendações para LinkedIn
     if any("linkedin" in fator.lower() for fator in fatores_risco):
-        recomendacoes.append("Conduzir pesquisa de satisfação confidencial")
-        recomendacoes.append("Agendar 1:1 para discussão de carreira")
+        if "atividade recente" in fatores_str:
+            recomendacoes.append("🔍 Conduzir pesquisa de satisfação confidencial urgente")
+            recomendacoes.append("🔍 Agendar 1:1 estratégico para discussão de carreira e retenção")
+        if "mudanças frequentes" in fatores_str:
+            recomendacoes.append("Avaliar estabilidade desejada e oferecer incentivos de longo prazo")
     
+    # Recomendações gerais se não há problemas específicos
     if not recomendacoes:
-        recomendacoes.append("Manter acompanhamento regular")
-        recomendacoes.append("Reconhecer bom desempenho")
+        recomendacoes.append("Manter acompanhamento regular mensal")
+        recomendacoes.append("Reconhecer bom desempenho e comportamento exemplar")
+        recomendacoes.append("Continuar oferecendo oportunidades de desenvolvimento")
     
     return recomendacoes
 
