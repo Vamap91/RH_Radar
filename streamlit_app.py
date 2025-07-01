@@ -38,18 +38,24 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Configurações de scoring
+# Configurações de scoring rebalanceadas
 SCORING_CONFIG = {
-    "peso_tempo_casa": 0.25,
-    "peso_pdi": 0.20,
-    "peso_treinamentos": 0.15,
-    "peso_linkedin": 0.20,
-    "peso_ausencias": 0.20,
-    "tempo_casa_critico": 0.5,
-    "treinamentos_minimo": 2,
-    "ausencias_critico": 5,
-    "risco_baixo": 30,
-    "risco_medio": 60,
+    "peso_tempo_casa": 0.35,      # Aumentado - é o fator mais importante
+    "peso_pdi": 0.15,             # Diminuído - PDI depende do tempo de casa
+    "peso_treinamentos": 0.15,    # Diminuído - também depende do tempo
+    "peso_linkedin": 0.25,        # Mantido - indicador forte quando disponível
+    "peso_ausencias": 0.10,       # Diminuído - menos peso para ausências
+    
+    # Thresholds mais realistas
+    "tempo_casa_critico": 0.25,   # 3 meses (muito crítico)
+    "tempo_casa_risco": 1.0,      # 1 ano (ainda em risco)
+    "tempo_casa_estavel": 2.0,    # 2 anos (considerado estável)
+    
+    "treinamentos_minimo": 1,     # Mais realista
+    "ausencias_critico": 8,       # Mais tolerante
+    
+    "risco_baixo": 25,            # Ajustado para baixo
+    "risco_medio": 55,            # Ajustado para baixo
     "risco_alto": 100
 }
 
@@ -186,54 +192,107 @@ def create_metric_card(title: str, value: str, risk_level: str = "low"):
 # ================================
 
 def calcular_score_risco(employee: Employee) -> float:
-    """Calcula o score de risco do colaborador"""
+    """Calcula o score de risco do colaborador com lógica contextual melhorada"""
     score = 0
     
-    if employee.tempo_casa < SCORING_CONFIG["tempo_casa_critico"]:
-        score += 40 * SCORING_CONFIG["peso_tempo_casa"]
-    elif employee.tempo_casa < 2:
-        score += 20 * SCORING_CONFIG["peso_tempo_casa"]
+    # 1. FATOR TEMPO DE CASA (35% - o mais importante)
+    tempo_casa = employee.tempo_casa
     
+    if tempo_casa < SCORING_CONFIG["tempo_casa_critico"]:  # < 3 meses
+        score += 60 * SCORING_CONFIG["peso_tempo_casa"]  # Alto risco inicial
+    elif tempo_casa < SCORING_CONFIG["tempo_casa_risco"]:  # 3 meses - 1 ano
+        # Risco decresce gradualmente
+        risco_tempo = 40 - (tempo_casa * 20)  # De 40 a 20
+        score += max(risco_tempo, 10) * SCORING_CONFIG["peso_tempo_casa"]
+    elif tempo_casa < SCORING_CONFIG["tempo_casa_estavel"]:  # 1-2 anos
+        score += 15 * SCORING_CONFIG["peso_tempo_casa"]  # Risco baixo
+    # Acima de 2 anos = sem penalização por tempo
+    
+    # 2. FATOR PDI (15% - contextual por tempo de casa)
     if not employee.participou_pdi:
-        score += 50 * SCORING_CONFIG["peso_pdi"]
+        if tempo_casa < 0.5:  # < 6 meses - normal não ter PDI
+            score += 10 * SCORING_CONFIG["peso_pdi"]
+        elif tempo_casa < 1.0:  # 6 meses - 1 ano - começa a ser importante
+            score += 30 * SCORING_CONFIG["peso_pdi"]
+        else:  # > 1 ano - muito importante ter PDI
+            score += 60 * SCORING_CONFIG["peso_pdi"]
     
-    if employee.num_treinamentos < SCORING_CONFIG["treinamentos_minimo"]:
-        score += 40 * SCORING_CONFIG["peso_treinamentos"]
+    # 3. FATOR TREINAMENTOS (15% - contextual por tempo de casa)
+    treinamentos_esperados = max(1, int(tempo_casa * 2))  # 2 por ano esperado
+    deficit_treinamentos = max(0, treinamentos_esperados - employee.num_treinamentos)
     
+    if tempo_casa < 0.5:  # < 6 meses - não espera muitos treinamentos
+        if employee.num_treinamentos == 0:
+            score += 20 * SCORING_CONFIG["peso_treinamentos"]
+    else:  # > 6 meses - começa a esperar treinamentos
+        score += min(deficit_treinamentos * 20, 50) * SCORING_CONFIG["peso_treinamentos"]
+    
+    # 4. FATOR AUSÊNCIAS (10% - proporcional)
     if employee.num_ausencias > SCORING_CONFIG["ausencias_critico"]:
-        score += 50 * SCORING_CONFIG["peso_ausencias"]
+        # Penalização proporcional ao excesso
+        excesso = employee.num_ausencias - SCORING_CONFIG["ausencias_critico"]
+        score += min(excesso * 10, 60) * SCORING_CONFIG["peso_ausencias"]
     
+    # 5. FATOR LINKEDIN (25% - quando disponível)
     if employee.linkedin_data:
         if employee.linkedin_data.get("ativo_recentemente", False):
-            score += 30 * SCORING_CONFIG["peso_linkedin"]
+            score += 50 * SCORING_CONFIG["peso_linkedin"]
         if employee.linkedin_data.get("mudancas_frequentes", False):
-            score += 20 * SCORING_CONFIG["peso_linkedin"]
+            score += 30 * SCORING_CONFIG["peso_linkedin"]
     
     return min(score, 100)
 
 def identificar_fatores_risco(employee: Employee) -> List[str]:
-    """Identifica os fatores de risco do colaborador"""
+    """Identifica os fatores de risco do colaborador com análise contextual"""
     fatores = []
+    tempo_casa = employee.tempo_casa
     
-    if employee.tempo_casa < SCORING_CONFIG["tempo_casa_critico"]:
-        fatores.append("Pouco tempo de casa (< 6 meses)")
-    elif employee.tempo_casa < 2:
-        fatores.append("Tempo de casa baixo (< 2 anos)")
+    # Fatores relacionados ao tempo de casa
+    if tempo_casa < SCORING_CONFIG["tempo_casa_critico"]:
+        fatores.append("Colaborador muito novo (< 3 meses) - período crítico de adaptação")
+    elif tempo_casa < SCORING_CONFIG["tempo_casa_risco"]:
+        fatores.append("Colaborador em período de risco (< 1 ano)")
+    elif tempo_casa < SCORING_CONFIG["tempo_casa_estavel"]:
+        fatores.append("Colaborador em processo de estabilização (1-2 anos)")
     
+    # PDI contextual
     if not employee.participou_pdi:
-        fatores.append("Não participou de PDI nos últimos 12 meses")
+        if tempo_casa < 0.5:
+            fatores.append("PDI não realizado (normal para colaborador muito novo)")
+        elif tempo_casa < 1.0:
+            fatores.append("PDI não realizado (recomendado após 6 meses)")
+        else:
+            fatores.append("PDI não realizado (crítico para colaborador experiente)")
     
-    if employee.num_treinamentos < SCORING_CONFIG["treinamentos_minimo"]:
-        fatores.append(f"Poucos treinamentos ({employee.num_treinamentos} realizados)")
+    # Treinamentos contextuais
+    treinamentos_esperados = max(1, int(tempo_casa * 2))
+    if employee.num_treinamentos < treinamentos_esperados:
+        if tempo_casa < 0.5:
+            if employee.num_treinamentos == 0:
+                fatores.append("Nenhum treinamento realizado (considerar treinamento de integração)")
+        else:
+            deficit = treinamentos_esperados - employee.num_treinamentos
+            fatores.append(f"Déficit de treinamentos: {employee.num_treinamentos} realizados de {treinamentos_esperados} esperados")
     
+    # Ausências
     if employee.num_ausencias > SCORING_CONFIG["ausencias_critico"]:
-        fatores.append(f"Ausências frequentes ({employee.num_ausencias} faltas)")
+        fatores.append(f"Ausências excessivas ({employee.num_ausencias} faltas - acima do limite de {SCORING_CONFIG['ausencias_critico']})")
+    elif employee.num_ausencias > 3:
+        fatores.append(f"Ausências moderadas ({employee.num_ausencias} faltas - monitorar)")
     
+    # LinkedIn
     if employee.linkedin_data:
         if employee.linkedin_data.get("ativo_recentemente", False):
-            fatores.append("Perfil LinkedIn atualizado recentemente")
+            fatores.append("Perfil LinkedIn com atividade recente (possível busca ativa)")
         if employee.linkedin_data.get("mudancas_frequentes", False):
-            fatores.append("Histórico de mudanças frequentes de empresa")
+            fatores.append("Histórico de mudanças frequentes de empresa no LinkedIn")
+        if employee.linkedin_data.get("certificacoes_recentes", False):
+            fatores.append("Certificações/cursos recentes no LinkedIn (desenvolvimento próprio)")
+    
+    # Se não há fatores de risco significativos
+    if not fatores:
+        if tempo_casa >= 2 and employee.participou_pdi and employee.num_ausencias <= 3:
+            fatores.append("Perfil estável - baixo risco de saída")
     
     return fatores
 
@@ -328,50 +387,112 @@ def processar_planilha(df: pd.DataFrame) -> List[Employee]:
 def processar_pdf_linkedin(pdf_file, employee_name: str) -> Dict:
     """Processa PDF do LinkedIn e extrai informações relevantes"""
     if not HAS_PDF_SUPPORT:
-        st.warning("⚠️ Processamento de PDF não disponível. Instale PyMuPDF para usar esta funcionalidade.")
-        return {}
+        return {"erro": "PyMuPDF não disponível"}
     
     try:
+        # Resetar ponteiro do arquivo
         pdf_file.seek(0)
-        pdf_document = fitz.open(stream=pdf_file.read(), filetype="pdf")
+        
+        # Ler conteúdo do arquivo
+        pdf_content = pdf_file.read()
+        
+        # Verificar se o arquivo não está vazio
+        if len(pdf_content) == 0:
+            return {"erro": "Arquivo PDF vazio"}
+        
+        # Abrir PDF
+        pdf_document = fitz.open(stream=pdf_content, filetype="pdf")
+        
+        if pdf_document.page_count == 0:
+            pdf_document.close()
+            return {"erro": "PDF sem páginas"}
+        
         text = ""
         
+        # Extrair texto de todas as páginas
         for page_num in range(pdf_document.page_count):
-            page = pdf_document[page_num]
-            text += page.get_text()
+            try:
+                page = pdf_document[page_num]
+                page_text = page.get_text()
+                text += page_text + "\n"
+            except Exception as e:
+                continue  # Pular páginas com erro
         
         pdf_document.close()
         
+        # Verificar se conseguiu extrair texto
+        if not text or len(text.strip()) < 10:
+            return {
+                "erro": "Não foi possível extrair texto do PDF",
+                "texto_extraido": False,
+                "debug_info": f"Texto extraído: {len(text)} caracteres"
+            }
+        
+        # Análise do conteúdo extraído
         linkedin_data = {
             "ativo_recentemente": False,
             "mudancas_frequentes": False,
-            "certificacoes_recentes": False
+            "certificacoes_recentes": False,
+            "texto_extraido": True,
+            "chars_extraidos": len(text),
+            "debug_info": f"Processado com sucesso: {len(text)} caracteres"
         }
         
-        if not text.strip():
-            return linkedin_data
-        
-        current_year = datetime.now().year
         text_lower = text.lower()
+        current_year = datetime.now().year
         
-        if str(current_year) in text or str(current_year - 1) in text:
-            linkedin_data["ativo_recentemente"] = True
+        # Verificar atividade recente (buscar por anos recentes)
+        anos_recentes = [str(current_year), str(current_year - 1), str(current_year - 2)]
+        for ano in anos_recentes:
+            if ano in text:
+                linkedin_data["ativo_recentemente"] = True
+                break
         
-        work_indicators = ["empresa", "company", "trabalho", "work", "emprego", "job"]
-        work_count = sum(text_lower.count(indicator) for indicator in work_indicators)
-        if work_count > 10:
+        # Verificar mudanças frequentes (indicadores de trabalho/empresa)
+        work_indicators = [
+            "empresa", "company", "trabalho", "work", "emprego", "job",
+            "cargo", "position", "função", "role", "experiência", "experience",
+            "atuou", "worked", "atua", "works"
+        ]
+        
+        work_count = 0
+        for indicator in work_indicators:
+            work_count += text_lower.count(indicator)
+        
+        # Se tem muitos indicadores de trabalho, pode indicar mudanças frequentes
+        if work_count > 8:
             linkedin_data["mudancas_frequentes"] = True
         
-        cert_keywords = ["certificado", "certificate", "curso", "course", "training"]
-        cert_count = sum(text_lower.count(keyword) for keyword in cert_keywords)
-        if cert_count > 3:
+        # Verificar certificações e cursos
+        cert_keywords = [
+            "certificado", "certificate", "certificação", "certification",
+            "curso", "course", "treinamento", "training", "capacitação",
+            "diploma", "formação", "education", "qualificação", "skill",
+            "certified", "licensed", "especialização"
+        ]
+        
+        cert_count = 0
+        for keyword in cert_keywords:
+            cert_count += text_lower.count(keyword)
+        
+        if cert_count > 2:
             linkedin_data["certificacoes_recentes"] = True
+        
+        # Adicionar informações de debug
+        linkedin_data["debug_indicators"] = {
+            "work_count": work_count,
+            "cert_count": cert_count,
+            "anos_encontrados": [ano for ano in anos_recentes if ano in text]
+        }
         
         return linkedin_data
         
     except Exception as e:
-        st.error(f"Erro ao processar PDF do LinkedIn para {employee_name}: {str(e)}")
-        return {}
+        return {
+            "erro": f"Erro ao processar PDF: {str(e)}",
+            "texto_extraido": False,
+            "debug_info": f"Exceção: {type(e).__name__}"
+        }
 
 # ================================
 # FUNÇÕES DE EXPORTAÇÃO
@@ -676,6 +797,9 @@ def render_upload_page():
                 if st.button("🚀 Processar Todos os PDFs Associados", use_container_width=True):
                     with st.spinner("Processando PDFs do LinkedIn..."):
                         processed_count = 0
+                        error_count = 0
+                        
+                        st.markdown("#### 📋 Resultado do Processamento:")
                         
                         for pdf_name, employee in pdf_employee_mapping.items():
                             # Encontrar o arquivo PDF correspondente
@@ -686,62 +810,145 @@ def render_upload_page():
                                     break
                             
                             if pdf_file:
+                                st.write(f"📄 Processando: **{pdf_name}** → **{employee.nome}**")
+                                
                                 linkedin_data = processar_pdf_linkedin(pdf_file, employee.nome)
                                 
-                                if linkedin_data and linkedin_data.get("texto_extraido", False):
-                                    old_score = employee.score_risco
-                                    employee.linkedin_data = linkedin_data
-                                    employee.score_risco = calcular_score_risco(employee)
-                                    employee.fatores_risco = identificar_fatores_risco(employee)
-                                    employee.acoes_recomendadas = gerar_recomendacoes(employee.fatores_risco, employee)
+                                # Verificar se houve erro
+                                if linkedin_data.get("erro"):
+                                    error_count += 1
+                                    st.error(f"❌ Erro: {linkedin_data['erro']}")
+                                    if linkedin_data.get("debug_info"):
+                                        st.write(f"   Debug: {linkedin_data['debug_info']}")
+                                    continue
+                                
+                                # Verificar se extraiu texto
+                                if not linkedin_data.get("texto_extraido", False):
+                                    error_count += 1
+                                    st.error("❌ Não foi possível extrair texto do PDF")
+                                    continue
+                                
+                                # Processamento bem-sucedido
+                                old_score = employee.score_risco
+                                employee.linkedin_data = linkedin_data
+                                employee.score_risco = calcular_score_risco(employee)
+                                employee.fatores_risco = identificar_fatores_risco(employee)
+                                employee.acoes_recomendadas = gerar_recomendacoes(employee.fatores_risco, employee)
+                                
+                                processed_count += 1
+                                
+                                # Mostrar resultado detalhado
+                                col1, col2 = st.columns([3, 1])
+                                with col1:
+                                    st.success(f"✅ Processado com sucesso!")
                                     
-                                    processed_count += 1
+                                    # Mostrar informações extraídas
+                                    st.write(f"   • Texto extraído: {linkedin_data.get('chars_extraidos', 0)} caracteres")
                                     
-                                    # Mostrar resultado do processamento
-                                    col1, col2 = st.columns([3, 1])
-                                    with col1:
-                                        st.success(f"✅ {employee.nome} - PDF processado com sucesso")
-                                        
-                                        # Mostrar insights extraídos
-                                        insights = []
-                                        if linkedin_data.get("ativo_recentemente"):
-                                            insights.append("🔄 Atividade recente no LinkedIn")
-                                        if linkedin_data.get("mudancas_frequentes"):
-                                            insights.append("🏢 Histórico de mudanças frequentes")
-                                        if linkedin_data.get("certificacoes_recentes"):
-                                            insights.append("🎓 Certificações ou cursos recentes")
-                                        
-                                        if insights:
-                                            st.write("**Sinais detectados:**")
-                                            for insight in insights:
-                                                st.write(f"  • {insight}")
+                                    # Mostrar insights detectados
+                                    insights = []
+                                    if linkedin_data.get("ativo_recentemente"):
+                                        insights.append("🔄 Atividade recente detectada")
+                                    if linkedin_data.get("mudancas_frequentes"):
+                                        insights.append("🏢 Múltiplas experiências profissionais")
+                                    if linkedin_data.get("certificacoes_recentes"):
+                                        insights.append("🎓 Certificações/cursos encontrados")
+                                    
+                                    if insights:
+                                        st.write("   **Sinais detectados:**")
+                                        for insight in insights:
+                                            st.write(f"     • {insight}")
+                                    else:
+                                        st.write("   • Nenhum sinal de risco detectado")
+                                    
+                                    # Mostrar debug info se disponível
+                                    if linkedin_data.get("debug_indicators"):
+                                        debug = linkedin_data["debug_indicators"]
+                                        with st.expander("🔍 Detalhes da análise"):
+                                            st.write(f"Indicadores de trabalho: {debug.get('work_count', 0)}")
+                                            st.write(f"Indicadores de certificação: {debug.get('cert_count', 0)}")
+                                            st.write(f"Anos encontrados: {debug.get('anos_encontrados', [])}")
+                                
+                                with col2:
+                                    # Mostrar mudança no score
+                                    if old_score != employee.score_risco:
+                                        delta = employee.score_risco - old_score
+                                        if delta > 0:
+                                            st.error(f"⬆️ +{delta:.1f}")
+                                            st.write(f"{old_score:.1f} → {employee.score_risco:.1f}")
                                         else:
-                                            st.write("• Nenhum sinal de risco detectado no LinkedIn")
-                                    
-                                    with col2:
-                                        if old_score != employee.score_risco:
-                                            delta = employee.score_risco - old_score
-                                            if delta > 0:
-                                                st.error(f"⬆️ +{delta:.1f}")
-                                            else:
-                                                st.success(f"⬇️ {delta:.1f}")
-                                        else:
-                                            st.info("Score mantido")
+                                            st.success(f"⬇️ {delta:.1f}")
+                                            st.write(f"{old_score:.1f} → {employee.score_risco:.1f}")
+                                    else:
+                                        st.info("➡️ Score mantido")
+                                        st.write(f"Score: {employee.score_risco:.1f}")
+                                
+                                st.markdown("---")
                         
-                        # Resumo final
+                        # Resumo final do processamento
+                        st.markdown("### 📊 Resumo do Processamento")
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("PDFs Processados", processed_count)
+                        with col2:
+                            st.metric("Erros", error_count)
+                        with col3:
+                            total_linkedin = len([e for e in st.session_state.employees if e.linkedin_data])
+                            st.metric("Total com LinkedIn", total_linkedin)
+                        
                         if processed_count > 0:
                             st.balloons()
                             st.success(f"""
                             🎉 **Processamento Concluído!**
                             
-                            - {processed_count} PDFs processados com sucesso
-                            - {len([e for e in st.session_state.employees if e.linkedin_data])} colaboradores agora têm dados do LinkedIn
-                            - Scores recalculados automaticamente
+                            ✅ {processed_count} PDFs processados com sucesso  
+                            ❌ {error_count} erros encontrados  
+                            📊 {total_linkedin} colaboradores agora têm dados do LinkedIn  
                             
-                            **Próximos passos:** Vá para o Dashboard para ver os resultados!
+                            **Próximo passo:** Vá para o Dashboard para ver os resultados atualizados!
                             """)
                         else:
-                            st.error("❌ Nenhum PDF foi processado com sucesso. Verifique os arquivos.")
+                            st.error("""
+                            ❌ **Nenhum PDF foi processado com sucesso**
+                            
+                            **Possíveis causas:**
+                            - PDFs podem estar corrompidos ou protegidos por senha
+                            - PDFs podem ser apenas imagens (sem texto extraível)
+                            - Arquivos podem não ser PDFs válidos
+                            
+                            **Soluções:**
+                            - Verifique se os PDFs abrem normalmente
+                            - Exporte novamente do LinkedIn
+                            - Certifique-se de que não são apenas imagens
+                            """)
+                            
+                        # Mostrar dicas de troubleshooting se houve erros
+                        if error_count > 0:
+                            with st.expander("🛠️ Dicas para resolver problemas"):
+                                st.markdown("""
+                                ### Problemas comuns e soluções:
+                                
+                                **1. "Não foi possível extrair texto"**
+                                - O PDF pode ser uma imagem escaneada
+                                - Solução: Exporte novamente do LinkedIn
+                                
+                                **2. "PDF vazio" ou "PDF sem páginas"**
+                                - Arquivo corrompido no upload
+                                - Solução: Faça upload novamente
+                                
+                                **3. "Erro ao processar PDF"**
+                                - PDF pode estar protegido por senha
+                                - Solução: Remova a proteção ou exporte novamente
+                                
+                                ### ✅ Como garantir PDFs funcionais:
+                                1. No LinkedIn, vá em seu perfil
+                                2. Clique em "Mais" → "Salvar como PDF"
+                                3. Aguarde o download completar
+                                4. Teste abrindo o PDF antes do upload
+                                """)
+            else:
+                st.info("💡 Associe pelo menos um PDF a um colaborador para poder processar.")
             
             # Instruções para melhor nomeação
             with st.expander("💡 Dicas para melhor associação automática"):
