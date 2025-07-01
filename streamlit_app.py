@@ -1,17 +1,19 @@
 """
 🎯 Radar RH - Sistema de Análise de Rotatividade e Engajamento
-Versão simplificada em arquivo único
+Versão completa e funcional
 """
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime
 import base64
 import io
 import json
 from typing import Dict, List, Any, Optional
+from dataclasses import dataclass
+
 # Imports opcionais com tratamento de erro
 try:
     import fitz  # PyMuPDF
@@ -24,7 +26,6 @@ try:
     HAS_OPENAI = True
 except ImportError:
     HAS_OPENAI = False
-from dataclasses import dataclass
 
 # ================================
 # CONFIGURAÇÕES E CONSTANTES
@@ -44,7 +45,7 @@ SCORING_CONFIG = {
     "peso_treinamentos": 0.15,
     "peso_linkedin": 0.20,
     "peso_ausencias": 0.20,
-    "tempo_casa_critico": 0.5,  # anos
+    "tempo_casa_critico": 0.5,
     "treinamentos_minimo": 2,
     "ausencias_critico": 5,
     "risco_baixo": 30,
@@ -188,25 +189,20 @@ def calcular_score_risco(employee: Employee) -> float:
     """Calcula o score de risco do colaborador"""
     score = 0
     
-    # Fator tempo de casa (quanto menor, maior o risco)
     if employee.tempo_casa < SCORING_CONFIG["tempo_casa_critico"]:
         score += 40 * SCORING_CONFIG["peso_tempo_casa"]
     elif employee.tempo_casa < 2:
         score += 20 * SCORING_CONFIG["peso_tempo_casa"]
     
-    # Fator PDI
     if not employee.participou_pdi:
         score += 50 * SCORING_CONFIG["peso_pdi"]
     
-    # Fator treinamentos
     if employee.num_treinamentos < SCORING_CONFIG["treinamentos_minimo"]:
         score += 40 * SCORING_CONFIG["peso_treinamentos"]
     
-    # Fator ausências
     if employee.num_ausencias > SCORING_CONFIG["ausencias_critico"]:
         score += 50 * SCORING_CONFIG["peso_ausencias"]
     
-    # Fator LinkedIn (se disponível)
     if employee.linkedin_data:
         if employee.linkedin_data.get("ativo_recentemente", False):
             score += 30 * SCORING_CONFIG["peso_linkedin"]
@@ -245,23 +241,23 @@ def gerar_recomendacoes(fatores_risco: List[str], employee: Employee) -> List[st
     """Gera recomendações de ação"""
     recomendacoes = []
     
-    if "Pouco tempo de casa" in str(fatores_risco) or "Tempo de casa baixo" in str(fatores_risco):
+    if any("tempo de casa" in fator.lower() for fator in fatores_risco):
         recomendacoes.append("Implementar programa de mentoria para novos colaboradores")
         recomendacoes.append("Agendar check-ins regulares com gestor direto")
     
-    if "Não participou de PDI" in str(fatores_risco):
+    if any("pdi" in fator.lower() for fator in fatores_risco):
         recomendacoes.append("Agendar reunião de PDI e definir metas de carreira")
         recomendacoes.append("Criar plano de desenvolvimento individual")
     
-    if "Poucos treinamentos" in str(fatores_risco):
+    if any("treinamentos" in fator.lower() for fator in fatores_risco):
         recomendacoes.append("Oferecer trilha de desenvolvimento personalizada")
         recomendacoes.append("Inscrever em cursos relevantes para o cargo")
     
-    if "Ausências frequentes" in str(fatores_risco):
+    if any("ausências" in fator.lower() for fator in fatores_risco):
         recomendacoes.append("Realizar conversa individual para entender causas")
         recomendacoes.append("Avaliar necessidade de suporte adicional")
     
-    if "LinkedIn" in str(fatores_risco):
+    if any("linkedin" in fator.lower() for fator in fatores_risco):
         recomendacoes.append("Conduzir pesquisa de satisfação confidencial")
         recomendacoes.append("Agendar 1:1 para discussão de carreira")
     
@@ -297,13 +293,10 @@ def processar_planilha(df: pd.DataFrame) -> List[Employee]:
     """Processa a planilha e retorna lista de funcionários"""
     employees = []
     
-    # Padronizar nomes das colunas
-    df.columns = df.columns.str.lower().str.strip()
-    df.columns = df.columns.str.replace(' ', '_')
+    df.columns = df.columns.str.lower().str.strip().str.replace(' ', '_')
     
     required_columns = ['nome', 'departamento', 'cargo', 'tempo_casa', 'participou_pdi', 'num_treinamentos', 'num_ausencias']
     
-    # Verificar se todas as colunas necessárias existem
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
         st.error(f"Colunas obrigatórias ausentes: {', '.join(missing_columns)}")
@@ -321,7 +314,6 @@ def processar_planilha(df: pd.DataFrame) -> List[Employee]:
                 num_ausencias=int(row['num_ausencias'])
             )
             
-            # Calcular score e fatores
             employee.score_risco = calcular_score_risco(employee)
             employee.fatores_risco = identificar_fatores_risco(employee)
             employee.acoes_recomendadas = gerar_recomendacoes(employee.fatores_risco, employee)
@@ -336,11 +328,10 @@ def processar_planilha(df: pd.DataFrame) -> List[Employee]:
 def processar_pdf_linkedin(pdf_file, employee_name: str) -> Dict:
     """Processa PDF do LinkedIn e extrai informações relevantes"""
     if not HAS_PDF_SUPPORT:
-        st.warning(f"⚠️ Processamento de PDF não disponível. Instale PyMuPDF para usar esta funcionalidade.")
+        st.warning("⚠️ Processamento de PDF não disponível. Instale PyMuPDF para usar esta funcionalidade.")
         return {}
     
     try:
-        # Reset file pointer
         pdf_file.seek(0)
         pdf_document = fitz.open(stream=pdf_file.read(), filetype="pdf")
         text = ""
@@ -351,83 +342,36 @@ def processar_pdf_linkedin(pdf_file, employee_name: str) -> Dict:
         
         pdf_document.close()
         
-        # Análise do texto extraído
         linkedin_data = {
             "ativo_recentemente": False,
             "mudancas_frequentes": False,
-            "certificacoes_recentes": False,
-            "texto_extraido": len(text) > 0
+            "certificacoes_recentes": False
         }
         
         if not text.strip():
-            st.warning(f"⚠️ Não foi possível extrair texto do PDF para {employee_name}")
             return linkedin_data
         
-        # Verificar atividade recente (buscar por datas recentes)
         current_year = datetime.now().year
-        last_year = current_year - 1
-        
-        # Buscar padrões de data mais robustos
-        year_patterns = [str(current_year), str(last_year), f"{current_year}", f"{last_year}"]
-        month_patterns = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
-                         "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
-                         "jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
-        
         text_lower = text.lower()
         
-        # Verificar atividade recente
-        for year in year_patterns:
-            if year in text:
-                linkedin_data["ativo_recentemente"] = True
-                break
+        if str(current_year) in text or str(current_year - 1) in text:
+            linkedin_data["ativo_recentemente"] = True
         
-        # Verificar mudanças frequentes (contar indicadores de empresas/trabalhos)
-        work_indicators = [
-            "empresa", "company", "trabalho", "work", "emprego", "job",
-            "cargo", "position", "função", "role", "experiência", "experience"
-        ]
-        
-        work_count = 0
-        for indicator in work_indicators:
-            work_count += text_lower.count(indicator)
-        
-        # Se tem muitos indicadores de trabalho, pode indicar mudanças frequentes
+        work_indicators = ["empresa", "company", "trabalho", "work", "emprego", "job"]
+        work_count = sum(text_lower.count(indicator) for indicator in work_indicators)
         if work_count > 10:
             linkedin_data["mudancas_frequentes"] = True
         
-        # Verificar certificações e cursos
-        cert_keywords = [
-            "certificado", "certificate", "certificação", "certification",
-            "curso", "course", "treinamento", "training", "capacitação",
-            "diploma", "formação", "education", "qualificação", "skill"
-        ]
-        
-        cert_count = 0
-        for keyword in cert_keywords:
-            cert_count += text_lower.count(keyword)
-        
+        cert_keywords = ["certificado", "certificate", "curso", "course", "training"]
+        cert_count = sum(text_lower.count(keyword) for keyword in cert_keywords)
         if cert_count > 3:
             linkedin_data["certificacoes_recentes"] = True
-        
-        # Debug info (apenas em desenvolvimento)
-        linkedin_data["debug_info"] = {
-            "chars_extracted": len(text),
-            "work_indicators": work_count,
-            "cert_indicators": cert_count,
-            "has_current_year": str(current_year) in text,
-            "has_last_year": str(last_year) in text
-        }
         
         return linkedin_data
         
     except Exception as e:
         st.error(f"Erro ao processar PDF do LinkedIn para {employee_name}: {str(e)}")
-        return {
-            "ativo_recentemente": False,
-            "mudancas_frequentes": False,
-            "certificacoes_recentes": False,
-            "erro": str(e)
-        }
+        return {}
 
 # ================================
 # FUNÇÕES DE EXPORTAÇÃO
@@ -492,12 +436,7 @@ def create_risk_distribution_chart(employees: List[Employee]):
         marker_colors=[COLORS["success"], COLORS["secondary"], COLORS["warning"]]
     )])
     
-    fig.update_layout(
-        title="Distribuição de Risco",
-        title_x=0.5,
-        height=400
-    )
-    
+    fig.update_layout(title="Distribuição de Risco", title_x=0.5, height=400)
     return fig
 
 def create_department_chart(employees: List[Employee]):
@@ -511,7 +450,6 @@ def create_department_chart(employees: List[Employee]):
     
     departments = list(dept_data.keys())
     avg_scores = [sum(scores)/len(scores) for scores in dept_data.values()]
-    
     colors = [get_risk_color(score) for score in avg_scores]
     
     fig = go.Figure(data=[go.Bar(
@@ -540,72 +478,6 @@ def init_session_state():
         st.session_state.employees = []
     if 'data_loaded' not in st.session_state:
         st.session_state.data_loaded = False
-    if 'current_page' not in st.session_state:
-        st.session_state.current_page = "home"
-
-# ================================
-# INTERFACE PRINCIPAL
-# ================================
-
-def main():
-    """Função principal da aplicação"""
-    
-    # Aplicar CSS e inicializar sessão
-    apply_custom_css()
-    init_session_state()
-    
-    # Header principal
-    st.markdown("""
-    <div class="custom-header">
-        <h1>🎯 Radar RH</h1>
-        <p>Sistema Inteligente de Análise de Rotatividade e Engajamento</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Sidebar com navegação
-    with st.sidebar:
-        st.title("📋 Navegação")
-        
-        page = st.radio(
-            "Selecione uma página:",
-            ["🏠 Início", "📤 Upload de Dados", "📊 Dashboard", "🔍 Análise Detalhada", "📋 Exportar Relatórios"],
-            key="navigation"
-        )
-        
-        st.markdown("---")
-        
-        # Status da configuração
-        if has_openai():
-            st.markdown('<div class="alert-success">✅ OpenAI Configurada</div>', unsafe_allow_html=True)
-        else:
-            if not HAS_OPENAI:
-                st.markdown('<div class="alert-warning">⚠️ OpenAI não instalada<br><small>Instale: pip install openai</small></div>', unsafe_allow_html=True)
-            else:
-                st.markdown('<div class="alert-warning">⚠️ OpenAI não configurada<br><small>Funcionalidades de IA limitadas</small></div>', unsafe_allow_html=True)
-        
-        if not HAS_PDF_SUPPORT:
-            st.markdown('<div class="alert-warning">⚠️ PDF não suportado<br><small>Instale: pip install PyMuPDF</small></div>', unsafe_allow_html=True)
-        
-        # Estatísticas rápidas
-        if st.session_state.employees:
-            st.markdown("### 📈 Estatísticas")
-            total = len(st.session_state.employees)
-            high_risk = len([e for e in st.session_state.employees if e.score_risco > 60])
-            
-            st.metric("Total de Colaboradores", total)
-            st.metric("Alto Risco", high_risk, delta=f"{(high_risk/total)*100:.1f}%")
-    
-    # Roteamento de páginas
-    if page == "🏠 Início":
-        render_home_page()
-    elif page == "📤 Upload de Dados":
-        render_upload_page()
-    elif page == "📊 Dashboard":
-        render_dashboard_page()
-    elif page == "🔍 Análise Detalhada":
-        render_analysis_page()
-    elif page == "📋 Exportar Relatórios":
-        render_export_page()
 
 # ================================
 # PÁGINAS DA APLICAÇÃO
@@ -613,7 +485,6 @@ def main():
 
 def render_home_page():
     """Página inicial"""
-    
     col1, col2 = st.columns([2, 1])
     
     with col1:
@@ -629,11 +500,11 @@ def render_home_page():
         - **🔍 Diagnóstico Detalhado**: Identificação dos fatores específicos de risco  
         - **💡 Recomendações IA**: Sugestões personalizadas de ação
         - **📈 Dashboards Visuais**: Gráficos interativos e intuitivos
-        - **📋 Relatórios Completos**: Exportação em Excel, PDF e JSON
+        - **📋 Relatórios Completos**: Exportação em Excel e JSON
         
         #### 🚀 Como começar:
         
-        1. **Prepare seus dados**: Use nossa planilha modelo
+        1. **Prepare seus dados**: Use uma planilha Excel com as colunas necessárias
         2. **Faça upload**: Carregue dados do RH + PDFs LinkedIn (opcional)
         3. **Analise**: Visualize resultados no dashboard
         4. **Aja**: Use as recomendações para reter talentos
@@ -644,192 +515,53 @@ def render_home_page():
         st.markdown(create_metric_card("Precisão do Modelo", "95%"), unsafe_allow_html=True)
         st.markdown(create_metric_card("Redução de Turnover", "30%"), unsafe_allow_html=True)
     
-    # Call to action
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        if st.button("📥 Baixar Planilha Modelo", use_container_width=True):
-            st.info("💡 Use o arquivo CSV que foi fornecido anteriormente como modelo, ou crie uma planilha Excel com as colunas: nome, departamento, cargo, tempo_casa, participou_pdi, num_treinamentos, num_ausencias")
+        if st.button("📋 Ver Instruções", use_container_width=True):
+            st.info("""
+            **Colunas necessárias na planilha Excel:**
+            - nome: Nome completo do colaborador
+            - departamento: Departamento ou área
+            - cargo: Cargo atual
+            - tempo_casa: Tempo em anos (ex: 1.5)
+            - participou_pdi: Sim/Não
+            - num_treinamentos: Número de treinamentos
+            - num_ausencias: Número de ausências
+            """)
     
     with col2:
         if st.button("📤 Fazer Upload", use_container_width=True):
-            st.session_state.current_page = "upload"
             st.rerun()
     
     with col3:
         if st.button("📊 Ver Dashboard", use_container_width=True):
             if st.session_state.employees:
-                st.session_state.current_page = "dashboard"
-                st.rerun()
-            else:
-                st.warning("Primeiro carregue seus dados!")
-    
-    # Seção adicional: Como obter PDF do LinkedIn
-    st.markdown("---")
-    with st.expander("📄 Como exportar seu perfil do LinkedIn como PDF"):
-        st.markdown("""
-        ### 📋 Passo a passo para exportar PDF do LinkedIn:
-        
-        1. **Acesse seu perfil** no LinkedIn
-        2. **Clique nos 3 pontos** ao lado do botão "Adicionar seção"
-        3. **Selecione "Salvar como PDF"**
-        4. **Renomeie o arquivo** com o nome do colaborador (ex: "João Silva.pdf")
-        5. **Faça upload** na página de Upload de Dados
-        
-        ### ⚡ Dicas importantes:
-        - Nomeie o arquivo PDF com o **nome exato** do colaborador da planilha
-        - O sistema detecta automaticamente: atividade recente, mudanças frequentes, certificações
-        - PDFs do LinkedIn são **opcionais** - o sistema funciona só com a planilha
-        - Dados do LinkedIn ajudam a **aumentar a precisão** da análise
-        
-        ### 🔒 Privacidade:
-        - Apenas use com **consentimento** dos colaboradores
-        - Dados são processados **localmente** e não armazenados
-        - Conforme **LGPD** e boas práticas de RH
-        """)
-    
-    # Status atual dos dados
-    if st.session_state.employees:
-        linkedin_count = len([e for e in st.session_state.employees if e.linkedin_data])
-        st.markdown("---")
-        st.markdown("### 📊 Status dos Dados Carregados")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Colaboradores na Planilha", len(st.session_state.employees))
-        with col2:
-            st.metric("Com dados do LinkedIn", linkedin_count, 
-                     delta=f"{(linkedin_count/len(st.session_state.employees)*100):.1f}%" if linkedin_count > 0 else None)
-    
-    with col2:
-        if st.button("📤 Fazer Upload", use_container_width=True):
-            st.session_state.current_page = "upload"
-            st.rerun()
-    
-    with col3:
-        if st.button("📊 Ver Dashboard", use_container_width=True):
-            if st.session_state.employees:
-                st.session_state.current_page = "dashboard"
-                st.rerun()
-            else:
-                st.warning("Primeiro carregue seus dados!")
-    
-    # Seção adicional: Como obter PDF do LinkedIn
-    st.markdown("---")
-    with st.expander("📄 Como exportar seu perfil do LinkedIn como PDF"):
-        st.markdown("""
-        ### 📋 Passo a passo para exportar PDF do LinkedIn:
-        
-        1. **Acesse seu perfil** no LinkedIn
-        2. **Clique nos 3 pontos** ao lado do botão "Adicionar seção"
-        3. **Selecione "Salvar como PDF"**
-        4. **Renomeie o arquivo** com o nome do colaborador (ex: "João Silva.pdf")
-        5. **Faça upload** na página de Upload de Dados
-        
-        ### ⚡ Dicas importantes:
-        - Nomeie o arquivo PDF com o **nome exato** do colaborador da planilha
-        - O sistema detecta automaticamente: atividade recente, mudanças frequentes, certificações
-        - PDFs do LinkedIn são **opcionais** - o sistema funciona só com a planilha
-        - Dados do LinkedIn ajudam a **aumentar a precisão** da análise
-        
-        ### 🔒 Privacidade:
-        - Apenas use com **consentimento** dos colaboradores
-        - Dados são processados **localmente** e não armazenados
-        - Conforme **LGPD** e boas práticas de RH
-        """)
-    
-    # Status atual dos dados
-    if st.session_state.employees:
-        linkedin_count = len([e for e in st.session_state.employees if e.linkedin_data])
-        st.markdown("---")
-        st.markdown("### 📊 Status dos Dados Carregados")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Colaboradores na Planilha", len(st.session_state.employees))
-        with col2:
-            st.metric("Com dados do LinkedIn", linkedin_count, 
-                     delta=f"{(linkedin_count/len(st.session_state.employees)*100):.1f}%" if linkedin_count > 0 else None)
-                    8, 2, 1, 0, 12, 1, 6, 15, 2, 1
-                ]
-            }
-            
-            df_modelo = pd.DataFrame(modelo_data)
-            
-            # Criar arquivo Excel
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_modelo.to_excel(writer, sheet_name='Dados_Colaboradores', index=False)
-                
-                # Adicionar uma aba com instruções
-                instrucoes = pd.DataFrame({
-                    'Coluna': ['nome', 'departamento', 'cargo', 'tempo_casa', 'participou_pdi', 'num_treinamentos', 'num_ausencias'],
-                    'Descrição': [
-                        'Nome completo do colaborador',
-                        'Departamento ou área de trabalho',
-                        'Cargo atual',
-                        'Tempo de casa em anos (ex: 1.5 para 1 ano e 6 meses)',
-                        'Participou de PDI nos últimos 12 meses (Sim/Não)',
-                        'Número de treinamentos realizados no último ano',
-                        'Número de faltas/ausências nos últimos 6 meses'
-                    ],
-                    'Exemplo': [
-                        'João Silva Santos',
-                        'Vendas',
-                        'Vendedor Sênior',
-                        '2.5',
-                        'Sim',
-                        '4',
-                        '2'
-                    ]
-                })
-                instrucoes.to_excel(writer, sheet_name='Instruções', index=False)
-            
-            st.download_button(
-                label="💾 Download Modelo.xlsx",
-                data=output.getvalue(),
-                file_name="modelo_radar_rh.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            st.success("✅ Planilha modelo criada! Use como base para seus dados.")
-    
-    with col2:
-        if st.button("📤 Fazer Upload", use_container_width=True):
-            st.session_state.current_page = "upload"
-            st.rerun()
-    
-    with col3:
-        if st.button("📊 Ver Dashboard", use_container_width=True):
-            if st.session_state.employees:
-                st.session_state.current_page = "dashboard"
                 st.rerun()
             else:
                 st.warning("Primeiro carregue seus dados!")
 
 def render_upload_page():
     """Página de upload"""
-    
     st.markdown("### 📤 Upload de Dados")
-    st.markdown("Faça upload da sua planilha Excel com os dados dos colaboradores.")
     
-    # Upload da planilha principal
     uploaded_file = st.file_uploader(
         "📊 Selecione sua planilha Excel",
-        type=['xlsx', 'xls'],
+        type=['xlsx', 'xls', 'csv'],
         help="A planilha deve conter as colunas: nome, departamento, cargo, tempo_casa, participou_pdi, num_treinamentos, num_ausencias"
     )
     
     if uploaded_file is not None:
         try:
-            df = pd.read_excel(uploaded_file)
-            st.success(f"✅ Planilha carregada com sucesso! {len(df)} registros encontrados.")
+            if uploaded_file.name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file)
+            else:
+                df = pd.read_excel(uploaded_file)
             
-            # Preview dos dados
-            st.markdown("#### 👀 Preview dos Dados")
+            st.success(f"✅ Arquivo carregado com sucesso! {len(df)} registros encontrados.")
             st.dataframe(df.head(), use_container_width=True)
             
-            # Validação das colunas
             required_cols = ['nome', 'departamento', 'cargo', 'tempo_casa', 'participou_pdi', 'num_treinamentos', 'num_ausencias']
             df_cols = [col.lower().strip().replace(' ', '_') for col in df.columns]
             
@@ -837,7 +569,6 @@ def render_upload_page():
             
             if missing_cols:
                 st.error(f"❌ Colunas obrigatórias ausentes: {', '.join(missing_cols)}")
-                st.info("💡 Certifique-se de que sua planilha possui todas as colunas necessárias.")
             else:
                 st.success("✅ Todas as colunas obrigatórias estão presentes!")
                 
@@ -851,103 +582,52 @@ def render_upload_page():
                             st.success(f"✅ {len(employees)} colaboradores processados com sucesso!")
                             st.balloons()
                         else:
-                            st.error("❌ Erro ao processar os dados. Verifique o formato da planilha.")
+                            st.error("❌ Erro ao processar os dados.")
         
         except Exception as e:
-            st.error(f"❌ Erro ao ler a planilha: {str(e)}")
+            st.error(f"❌ Erro ao ler o arquivo: {str(e)}")
     
     # Upload opcional de PDFs do LinkedIn
     st.markdown("---")
     st.markdown("#### 📄 PDFs do LinkedIn (Opcional)")
     
-    if not HAS_PDF_SUPPORT:
-        st.info("💡 Funcionalidade de PDF não disponível nesta versão. A análise funcionará apenas com os dados da planilha.")
-    else:
-        st.info("💡 Os PDFs do LinkedIn ajudam a melhorar a precisão da análise. Nomeie os arquivos com o nome do colaborador.")
-        
+    if HAS_PDF_SUPPORT:
         linkedin_files = st.file_uploader(
             "Selecione PDFs do LinkedIn",
             type=['pdf'],
             accept_multiple_files=True,
-            help="Exporte o perfil LinkedIn como PDF e nomeie o arquivo com o nome do colaborador"
+            help="Nomeie o arquivo com o nome do colaborador"
         )
         
         if linkedin_files and st.session_state.employees:
-            st.markdown("#### 🔄 Processamento dos PDFs:")
-            
             for pdf_file in linkedin_files:
-                st.write(f"📄 Processando: {pdf_file.name}")
-                
-                # Tentar associar PDF com colaborador pelo nome do arquivo
                 file_name_clean = pdf_file.name.lower().replace('.pdf', '').replace('_', ' ').replace('-', ' ')
                 
-                # Buscar colaborador com nome similar
-                colaborador_encontrado = False
                 for employee in st.session_state.employees:
-                    # Verificar se alguma parte do nome do colaborador está no nome do arquivo
                     nome_parts = employee.nome.lower().split()
                     if any(part in file_name_clean for part in nome_parts if len(part) > 2):
                         linkedin_data = processar_pdf_linkedin(pdf_file, employee.nome)
                         
-                        if linkedin_data:  # Se conseguiu processar
+                        if linkedin_data:
                             employee.linkedin_data = linkedin_data
-                            
-                            # Recalcular score com dados do LinkedIn
                             old_score = employee.score_risco
                             employee.score_risco = calcular_score_risco(employee)
                             employee.fatores_risco = identificar_fatores_risco(employee)
                             employee.acoes_recomendadas = gerar_recomendacoes(employee.fatores_risco, employee)
                             
-                            # Mostrar resultado
-                            col1, col2 = st.columns([2, 1])
-                            with col1:
-                                st.success(f"✅ PDF processado para: **{employee.nome}**")
-                                
-                                # Mostrar insights do LinkedIn
-                                insights_linkedin = []
-                                if linkedin_data.get("ativo_recentemente"):
-                                    insights_linkedin.append("🔄 Perfil atualizado recentemente")
-                                if linkedin_data.get("mudancas_frequentes"):
-                                    insights_linkedin.append("🏢 Histórico de mudanças frequentes")
-                                if linkedin_data.get("certificacoes_recentes"):
-                                    insights_linkedin.append("🎓 Certificações recentes")
-                                
-                                if insights_linkedin:
-                                    st.write("**Insights do LinkedIn:**")
-                                    for insight in insights_linkedin:
-                                        st.write(f"  • {insight}")
+                            st.success(f"✅ PDF processado para: {employee.nome}")
+                            if old_score != employee.score_risco:
+                                delta = employee.score_risco - old_score
+                                if delta > 0:
+                                    st.warning(f"Score alterado: {old_score:.1f} → {employee.score_risco:.1f} (+{delta:.1f})")
                                 else:
-                                    st.write("• Nenhum sinal de risco detectado no LinkedIn")
-                            
-                            with col2:
-                                if old_score != employee.score_risco:
-                                    delta = employee.score_risco - old_score
-                                    if delta > 0:
-                                        st.warning(f"Score alterado: {old_score:.1f} → {employee.score_risco:.1f} (+{delta:.1f})")
-                                    else:
-                                        st.info(f"Score: {employee.score_risco:.1f}")
-                                else:
-                                    st.info(f"Score mantido: {employee.score_risco:.1f}")
-                            
-                            colaborador_encontrado = True
-                            break
-                
-                if not colaborador_encontrado:
-                    st.warning(f"⚠️ Não foi possível associar '{pdf_file.name}' a nenhum colaborador.")
-                    st.write("💡 Certifique-se de que o nome do arquivo contém parte do nome do colaborador.")
-                
-                st.markdown("---")
-            
-            # Resumo final
-            linkedin_processed = len([e for e in st.session_state.employees if e.linkedin_data])
-            if linkedin_processed > 0:
-                st.success(f"🎉 {linkedin_processed} de {len(st.session_state.employees)} colaboradores têm dados do LinkedIn processados!")
-            else:
-                st.info("💡 Nenhum PDF foi associado aos colaboradores. Verifique os nomes dos arquivos.")
+                                    st.success(f"Score melhorado: {old_score:.1f} → {employee.score_risco:.1f} ({delta:.1f})")
+                        break
+    else:
+        st.info("💡 Funcionalidade de PDF não disponível. Instale PyMuPDF para usar esta funcionalidade.")
 
 def render_dashboard_page():
     """Página do dashboard"""
-    
     if not st.session_state.employees:
         st.warning("⚠️ Nenhum dado carregado. Faça upload dos dados primeiro.")
         return
@@ -956,17 +636,15 @@ def render_dashboard_page():
     
     employees = st.session_state.employees
     
-    # Métricas principais
     col1, col2, col3, col4 = st.columns(4)
     
     total_employees = len(employees)
     high_risk = len([e for e in employees if e.score_risco > 60])
     medium_risk = len([e for e in employees if 30 < e.score_risco <= 60])
-    low_risk = len([e for e in employees if e.score_risco <= 30])
     avg_score = sum(e.score_risco for e in employees) / len(employees)
     
     with col1:
-        st.markdown(create_metric_card("Total de Colaboradores", str(total_employees)), unsafe_allow_html=True)
+        st.markdown(create_metric_card("Total", str(total_employees)), unsafe_allow_html=True)
     
     with col2:
         st.markdown(create_metric_card("Alto Risco", str(high_risk), "high"), unsafe_allow_html=True)
@@ -977,7 +655,6 @@ def render_dashboard_page():
     with col4:
         st.markdown(create_metric_card("Score Médio", f"{avg_score:.1f}", get_risk_level(avg_score).lower()), unsafe_allow_html=True)
     
-    # Gráficos principais
     col1, col2 = st.columns(2)
     
     with col1:
@@ -988,7 +665,6 @@ def render_dashboard_page():
         fig_dept = create_department_chart(employees)
         st.plotly_chart(fig_dept, use_container_width=True)
     
-    # Tabela de colaboradores em alto risco
     st.markdown("### 🚨 Colaboradores em Alto Risco")
     
     high_risk_employees = [e for e in employees if e.score_risco > 60]
@@ -1000,46 +676,16 @@ def render_dashboard_page():
                 'Nome': emp.nome,
                 'Departamento': emp.departamento,
                 'Score': f"{emp.score_risco:.1f}",
-                'Principal Fator': emp.fatores_risco[0] if emp.fatores_risco else 'N/A',
-                'Ação Prioritária': emp.acoes_recomendadas[0] if emp.acoes_recomendadas else 'N/A'
+                'Principal Fator': emp.fatores_risco[0] if emp.fatores_risco else 'N/A'
             })
         
         df_high_risk = pd.DataFrame(high_risk_data)
         st.dataframe(df_high_risk, use_container_width=True, hide_index=True)
     else:
         st.success("✅ Nenhum colaborador em alto risco!")
-    
-    # Insights automáticos
-    st.markdown("### 💡 Insights Automáticos")
-    
-    insights = []
-    
-    if high_risk / total_employees > 0.3:
-        insights.append(f"⚠️ {(high_risk/total_employees)*100:.1f}% dos colaboradores estão em alto risco")
-    
-    # Departamento com maior risco
-    dept_scores = {}
-    for emp in employees:
-        if emp.departamento not in dept_scores:
-            dept_scores[emp.departamento] = []
-        dept_scores[emp.departamento].append(emp.score_risco)
-    
-    avg_dept_scores = {dept: sum(scores)/len(scores) for dept, scores in dept_scores.items()}
-    worst_dept = max(avg_dept_scores, key=avg_dept_scores.get)
-    
-    insights.append(f"🏢 Departamento com maior risco: {worst_dept} ({avg_dept_scores[worst_dept]:.1f})")
-    
-    # Colaboradores novos em risco
-    new_employees_risk = [e for e in employees if e.tempo_casa < 1 and e.score_risco > 50]
-    if new_employees_risk:
-        insights.append(f"🆕 {len(new_employees_risk)} colaboradores novos (< 1 ano) em risco")
-    
-    for insight in insights:
-        st.markdown(f'<div class="alert-info">{insight}</div>', unsafe_allow_html=True)
 
 def render_analysis_page():
     """Página de análise detalhada"""
-    
     if not st.session_state.employees:
         st.warning("⚠️ Nenhum dado carregado. Faça upload dos dados primeiro.")
         return
@@ -1048,7 +694,6 @@ def render_analysis_page():
     
     employees = st.session_state.employees
     
-    # Filtros
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -1066,10 +711,9 @@ def render_analysis_page():
     with col3:
         sort_by = st.selectbox(
             "Ordenar por:",
-            ["Score de Risco (Desc)", "Score de Risco (Asc)", "Nome", "Departamento"]
+            ["Score de Risco (Desc)", "Nome", "Departamento"]
         )
     
-    # Aplicar filtros
     filtered_employees = employees.copy()
     
     if dept_filter != "Todos":
@@ -1083,11 +727,8 @@ def render_analysis_page():
         elif risk_filter == "Baixo":
             filtered_employees = [e for e in filtered_employees if e.score_risco <= 30]
     
-    # Ordenar
     if sort_by == "Score de Risco (Desc)":
         filtered_employees.sort(key=lambda x: x.score_risco, reverse=True)
-    elif sort_by == "Score de Risco (Asc)":
-        filtered_employees.sort(key=lambda x: x.score_risco)
     elif sort_by == "Nome":
         filtered_employees.sort(key=lambda x: x.nome)
     elif sort_by == "Departamento":
@@ -1095,7 +736,6 @@ def render_analysis_page():
     
     st.markdown(f"**{len(filtered_employees)} colaboradores encontrados**")
     
-    # Lista detalhada de colaboradores
     for i, emp in enumerate(filtered_employees):
         with st.expander(f"{emp.nome} - {emp.departamento} (Score: {emp.score_risco:.1f})"):
             
@@ -1109,13 +749,12 @@ def render_analysis_page():
                 st.write(f"**Treinamentos:** {emp.num_treinamentos}")
                 st.write(f"**Ausências:** {emp.num_ausencias}")
                 
-                # Gauge do score
                 fig_gauge = go.Figure(go.Indicator(
-                    mode = "gauge+number",
-                    value = emp.score_risco,
-                    domain = {'x': [0, 1], 'y': [0, 1]},
-                    title = {'text': "Score de Risco"},
-                    gauge = {
+                    mode="gauge+number",
+                    value=emp.score_risco,
+                    domain={'x': [0, 1], 'y': [0, 1]},
+                    title={'text': "Score de Risco"},
+                    gauge={
                         'axis': {'range': [None, 100]},
                         'bar': {'color': get_risk_color(emp.score_risco)},
                         'steps': [
@@ -1126,7 +765,7 @@ def render_analysis_page():
                     }
                 ))
                 fig_gauge.update_layout(height=200, margin=dict(l=20, r=20, t=40, b=20))
-                st.plotly_chart(fig_gauge, use_container_width=True, key=f"gauge_{i}_{emp.nome}")
+                st.plotly_chart(fig_gauge, use_container_width=True, key=f"gauge_{i}_{emp.nome.replace(' ', '_')}")
             
             with col2:
                 st.markdown("#### 🚨 Fatores de Risco")
@@ -1138,12 +777,11 @@ def render_analysis_page():
                 
                 st.markdown("#### 💡 Recomendações de Ação")
                 if emp.acoes_recomendadas:
-                    for i, acao in enumerate(emp.acoes_recomendadas, 1):
-                        st.markdown(f"{i}. {acao}")
+                    for j, acao in enumerate(emp.acoes_recomendadas, 1):
+                        st.markdown(f"{j}. {acao}")
                 
-                # Usar OpenAI se disponível
                 if has_openai() and HAS_OPENAI:
-                    if st.button(f"🤖 Gerar Insights IA", key=f"ai_{i}"):
+                    if st.button(f"🤖 Gerar Insights IA", key=f"ai_insights_{i}_{emp.nome.replace(' ', '_')}"):
                         try:
                             client = openai.OpenAI(api_key=get_openai_key())
                             
@@ -1178,7 +816,6 @@ def render_analysis_page():
                             
                         except Exception as e:
                             st.error(f"Erro ao gerar insights: {str(e)}")
-                            # Fallback para versão antiga da API
                             try:
                                 openai.api_key = get_openai_key()
                                 response = openai.ChatCompletion.create(
@@ -1202,13 +839,11 @@ def render_analysis_page():
 
 def render_export_page():
     """Página de exportação"""
-    
     if not st.session_state.employees:
         st.warning("⚠️ Nenhum dado carregado. Faça upload dos dados primeiro.")
         return
     
     st.markdown("### 📋 Exportar Relatórios")
-    st.markdown("Escolha o formato de exportação desejado:")
     
     employees = st.session_state.employees
     
@@ -1247,7 +882,6 @@ def render_export_page():
         st.markdown("Formato simples para planilhas")
         
         if st.button("📥 Baixar CSV", use_container_width=True):
-            # Criar DataFrame para CSV
             data = []
             for emp in employees:
                 data.append({
@@ -1271,12 +905,11 @@ def render_export_page():
                 mime="text/csv"
             )
     
-    # Preview dos dados
     st.markdown("---")
     st.markdown("#### 👀 Preview dos Dados")
     
     preview_data = []
-    for emp in employees[:10]:  # Mostrar apenas os primeiros 10
+    for emp in employees[:10]:
         preview_data.append({
             'Nome': emp.nome,
             'Departamento': emp.departamento,
@@ -1291,7 +924,6 @@ def render_export_page():
     if len(employees) > 10:
         st.info(f"Mostrando apenas os primeiros 10 de {len(employees)} colaboradores. Use os botões de download para obter o relatório completo.")
     
-    # Resumo executivo
     st.markdown("---")
     st.markdown("#### 📈 Resumo Executivo")
     
@@ -1317,8 +949,61 @@ def render_export_page():
     """)
 
 # ================================
-# EXECUÇÃO PRINCIPAL
+# INTERFACE PRINCIPAL
 # ================================
+
+def main():
+    """Função principal da aplicação"""
+    apply_custom_css()
+    init_session_state()
+    
+    st.markdown("""
+    <div class="custom-header">
+        <h1>🎯 Radar RH</h1>
+        <p>Sistema Inteligente de Análise de Rotatividade e Engajamento</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    with st.sidebar:
+        st.title("📋 Navegação")
+        
+        page = st.radio(
+            "Selecione uma página:",
+            ["🏠 Início", "📤 Upload de Dados", "📊 Dashboard", "🔍 Análise Detalhada", "📋 Exportar Relatórios"],
+            key="navigation"
+        )
+        
+        st.markdown("---")
+        
+        if has_openai():
+            st.markdown('<div class="alert-success">✅ OpenAI Configurada</div>', unsafe_allow_html=True)
+        else:
+            if not HAS_OPENAI:
+                st.markdown('<div class="alert-warning">⚠️ OpenAI não instalada</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="alert-warning">⚠️ OpenAI não configurada</div>', unsafe_allow_html=True)
+        
+        if not HAS_PDF_SUPPORT:
+            st.markdown('<div class="alert-warning">⚠️ PDF não suportado</div>', unsafe_allow_html=True)
+        
+        if st.session_state.employees:
+            st.markdown("### 📈 Estatísticas")
+            total = len(st.session_state.employees)
+            high_risk = len([e for e in st.session_state.employees if e.score_risco > 60])
+            
+            st.metric("Total de Colaboradores", total)
+            st.metric("Alto Risco", high_risk, delta=f"{(high_risk/total)*100:.1f}%")
+    
+    if page == "🏠 Início":
+        render_home_page()
+    elif page == "📤 Upload de Dados":
+        render_upload_page()
+    elif page == "📊 Dashboard":
+        render_dashboard_page()
+    elif page == "🔍 Análise Detalhada":
+        render_analysis_page()
+    elif page == "📋 Exportar Relatórios":
+        render_export_page()
 
 if __name__ == "__main__":
     main()
