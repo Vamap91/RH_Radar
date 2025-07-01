@@ -600,29 +600,175 @@ def render_upload_page():
         )
         
         if linkedin_files and st.session_state.employees:
+            st.markdown("#### 🔄 Processamento e Associação dos PDFs:")
+            
+            # Criar um dicionário para mapear PDFs para colaboradores
+            pdf_employee_mapping = {}
+            unmatched_pdfs = []
+            
+            # Primeiro, tentar associação automática
             for pdf_file in linkedin_files:
                 file_name_clean = pdf_file.name.lower().replace('.pdf', '').replace('_', ' ').replace('-', ' ')
                 
+                matched = False
                 for employee in st.session_state.employees:
                     nome_parts = employee.nome.lower().split()
-                    if any(part in file_name_clean for part in nome_parts if len(part) > 2):
-                        linkedin_data = processar_pdf_linkedin(pdf_file, employee.nome)
-                        
-                        if linkedin_data:
-                            employee.linkedin_data = linkedin_data
-                            old_score = employee.score_risco
-                            employee.score_risco = calcular_score_risco(employee)
-                            employee.fatores_risco = identificar_fatores_risco(employee)
-                            employee.acoes_recomendadas = gerar_recomendacoes(employee.fatores_risco, employee)
-                            
-                            st.success(f"✅ PDF processado para: {employee.nome}")
-                            if old_score != employee.score_risco:
-                                delta = employee.score_risco - old_score
-                                if delta > 0:
-                                    st.warning(f"Score alterado: {old_score:.1f} → {employee.score_risco:.1f} (+{delta:.1f})")
-                                else:
-                                    st.success(f"Score melhorado: {old_score:.1f} → {employee.score_risco:.1f} ({delta:.1f})")
+                    # Verificar se pelo menos 2 partes do nome estão no arquivo
+                    matches = sum(1 for part in nome_parts if len(part) > 2 and part in file_name_clean)
+                    
+                    if matches >= 2 or (matches >= 1 and len(nome_parts) <= 2):
+                        pdf_employee_mapping[pdf_file.name] = employee
+                        matched = True
                         break
+                
+                if not matched:
+                    unmatched_pdfs.append(pdf_file)
+            
+            # Mostrar associações automáticas
+            if pdf_employee_mapping:
+                st.success(f"✅ {len(pdf_employee_mapping)} PDFs associados automaticamente:")
+                for pdf_name, employee in pdf_employee_mapping.items():
+                    col1, col2, col3 = st.columns([2, 2, 1])
+                    with col1:
+                        st.write(f"📄 {pdf_name}")
+                    with col2:
+                        st.write(f"👤 {employee.nome}")
+                    with col3:
+                        if st.button("❌", key=f"remove_{pdf_name}", help="Remover associação"):
+                            # Mover de volta para não associados
+                            for pdf_file in linkedin_files:
+                                if pdf_file.name == pdf_name:
+                                    unmatched_pdfs.append(pdf_file)
+                                    del pdf_employee_mapping[pdf_name]
+                                    st.rerun()
+            
+            # Permitir associação manual para PDFs não associados
+            if unmatched_pdfs:
+                st.warning(f"⚠️ {len(unmatched_pdfs)} PDFs precisam de associação manual:")
+                
+                for pdf_file in unmatched_pdfs:
+                    col1, col2, col3 = st.columns([2, 3, 1])
+                    
+                    with col1:
+                        st.write(f"📄 {pdf_file.name}")
+                    
+                    with col2:
+                        # Lista de colaboradores disponíveis
+                        employee_options = ["Selecione um colaborador..."] + [emp.nome for emp in st.session_state.employees]
+                        selected_employee = st.selectbox(
+                            "Associar com:",
+                            employee_options,
+                            key=f"select_{pdf_file.name}"
+                        )
+                    
+                    with col3:
+                        if st.button("✅", key=f"add_{pdf_file.name}", disabled=(selected_employee == "Selecione um colaborador...")):
+                            # Encontrar o colaborador selecionado
+                            for employee in st.session_state.employees:
+                                if employee.nome == selected_employee:
+                                    pdf_employee_mapping[pdf_file.name] = employee
+                                    unmatched_pdfs.remove(pdf_file)
+                                    st.rerun()
+            
+            # Botão para processar todos os PDFs associados
+            if pdf_employee_mapping:
+                st.markdown("---")
+                if st.button("🚀 Processar Todos os PDFs Associados", use_container_width=True):
+                    with st.spinner("Processando PDFs do LinkedIn..."):
+                        processed_count = 0
+                        
+                        for pdf_name, employee in pdf_employee_mapping.items():
+                            # Encontrar o arquivo PDF correspondente
+                            pdf_file = None
+                            for file in linkedin_files:
+                                if file.name == pdf_name:
+                                    pdf_file = file
+                                    break
+                            
+                            if pdf_file:
+                                linkedin_data = processar_pdf_linkedin(pdf_file, employee.nome)
+                                
+                                if linkedin_data and linkedin_data.get("texto_extraido", False):
+                                    old_score = employee.score_risco
+                                    employee.linkedin_data = linkedin_data
+                                    employee.score_risco = calcular_score_risco(employee)
+                                    employee.fatores_risco = identificar_fatores_risco(employee)
+                                    employee.acoes_recomendadas = gerar_recomendacoes(employee.fatores_risco, employee)
+                                    
+                                    processed_count += 1
+                                    
+                                    # Mostrar resultado do processamento
+                                    col1, col2 = st.columns([3, 1])
+                                    with col1:
+                                        st.success(f"✅ {employee.nome} - PDF processado com sucesso")
+                                        
+                                        # Mostrar insights extraídos
+                                        insights = []
+                                        if linkedin_data.get("ativo_recentemente"):
+                                            insights.append("🔄 Atividade recente no LinkedIn")
+                                        if linkedin_data.get("mudancas_frequentes"):
+                                            insights.append("🏢 Histórico de mudanças frequentes")
+                                        if linkedin_data.get("certificacoes_recentes"):
+                                            insights.append("🎓 Certificações ou cursos recentes")
+                                        
+                                        if insights:
+                                            st.write("**Sinais detectados:**")
+                                            for insight in insights:
+                                                st.write(f"  • {insight}")
+                                        else:
+                                            st.write("• Nenhum sinal de risco detectado no LinkedIn")
+                                    
+                                    with col2:
+                                        if old_score != employee.score_risco:
+                                            delta = employee.score_risco - old_score
+                                            if delta > 0:
+                                                st.error(f"⬆️ +{delta:.1f}")
+                                            else:
+                                                st.success(f"⬇️ {delta:.1f}")
+                                        else:
+                                            st.info("Score mantido")
+                        
+                        # Resumo final
+                        if processed_count > 0:
+                            st.balloons()
+                            st.success(f"""
+                            🎉 **Processamento Concluído!**
+                            
+                            - {processed_count} PDFs processados com sucesso
+                            - {len([e for e in st.session_state.employees if e.linkedin_data])} colaboradores agora têm dados do LinkedIn
+                            - Scores recalculados automaticamente
+                            
+                            **Próximos passos:** Vá para o Dashboard para ver os resultados!
+                            """)
+                        else:
+                            st.error("❌ Nenhum PDF foi processado com sucesso. Verifique os arquivos.")
+            
+            # Instruções para melhor nomeação
+            with st.expander("💡 Dicas para melhor associação automática"):
+                st.markdown("""
+                ### 📋 Como nomear os PDFs para associação automática:
+                
+                **✅ Bons exemplos:**
+                - `João Silva.pdf`
+                - `Maria_Oliveira_Costa.pdf`
+                - `Pedro-Henrique-Lima.pdf`
+                
+                **❌ Evite:**
+                - `LinkedIn_Profile.pdf`
+                - `CV_2024.pdf`
+                - `Perfil.pdf`
+                
+                ### 🎯 Regras de associação:
+                - O sistema busca pelo **nome** e **sobrenome** do colaborador no nome do arquivo
+                - Precisa de pelo menos **2 partes do nome** para associação automática
+                - Ignora acentos, espaços e caracteres especiais
+                - Não diferencia maiúsculas/minúsculas
+                """)
+        
+        else:
+            if not st.session_state.employees:
+                st.info("💡 Primeiro faça upload da planilha Excel para poder associar os PDFs do LinkedIn.")
+            
     else:
         st.info("💡 Funcionalidade de PDF não disponível. Instale PyMuPDF para usar esta funcionalidade.")
 
