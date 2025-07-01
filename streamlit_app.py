@@ -64,64 +64,75 @@ class Employee:
 # ================================
 
 def calcular_score_risco(employee: Employee) -> float:
-    """Cálculo de score baseado apenas em dados Excel"""
+    """Cálculo de score ULTRA RIGOROSO baseado apenas em dados Excel"""
     score = 0
     
-    # 1. Tempo de Casa (25%)
-    if employee.tempo_casa < 0.5:
-        score += 15 * SCORING_CONFIG["peso_tempo_casa"]
-    elif employee.tempo_casa < 1:
-        score += 35 * SCORING_CONFIG["peso_tempo_casa"]
-    elif employee.tempo_casa < 2:
+    # 1. Tempo de Casa (25%) - MAIS RIGOROSO
+    if employee.tempo_casa < 0.5:  # < 6 meses
+        score += 30 * SCORING_CONFIG["peso_tempo_casa"]  # Era 15, agora 30
+    elif employee.tempo_casa < 1:  # 6-12 meses
+        score += 50 * SCORING_CONFIG["peso_tempo_casa"]  # Era 35, agora 50
+    elif employee.tempo_casa < 2:  # 1-2 anos
         score += 20 * SCORING_CONFIG["peso_tempo_casa"]
     
-    # 2. PDI (30%)
+    # 2. PDI (30%) - ULTRA RIGOROSO
     if not employee.participou_pdi:
-        if employee.tempo_casa < 0.5:
-            score += 15 * SCORING_CONFIG["peso_pdi"]
+        if employee.tempo_casa < 0.5:  # Novatos
+            score += 60 * SCORING_CONFIG["peso_pdi"]  # Era 15, agora 60
         elif employee.tempo_casa < 1:
-            score += 50 * SCORING_CONFIG["peso_pdi"]
+            score += 80 * SCORING_CONFIG["peso_pdi"]  # Era 50, agora 80
         elif employee.tempo_casa < 3:
-            score += 75 * SCORING_CONFIG["peso_pdi"]
-        else:
+            score += 90 * SCORING_CONFIG["peso_pdi"]  # Era 75, agora 90
+        else:  # Veteranos
             score += 100 * SCORING_CONFIG["peso_pdi"]
     
-    # 3. Treinamentos (25%)
-    if employee.tempo_casa >= 1:
+    # 3. Treinamentos (25%) - ULTRA RIGOROSO
+    if employee.tempo_casa >= 0.5:  # Mudou de 1 ano para 6 meses
         if employee.num_treinamentos == 0:
-            score += 100 * SCORING_CONFIG["peso_treinamentos"]
+            score += 100 * SCORING_CONFIG["peso_treinamentos"]  # Máximo sempre
         elif employee.num_treinamentos == 1:
-            score += 75 * SCORING_CONFIG["peso_treinamentos"]
+            score += 80 * SCORING_CONFIG["peso_treinamentos"]  # Era 75, agora 80
         elif employee.num_treinamentos < 3:
-            score += 50 * SCORING_CONFIG["peso_treinamentos"]
+            score += 60 * SCORING_CONFIG["peso_treinamentos"]  # Era 50, agora 60
         elif employee.num_treinamentos < 5:
-            score += 25 * SCORING_CONFIG["peso_treinamentos"]
-    else:
+            score += 30 * SCORING_CONFIG["peso_treinamentos"]  # Era 25, agora 30
+    else:  # Muito novatos (< 6 meses)
         if employee.num_treinamentos == 0:
-            score += 40 * SCORING_CONFIG["peso_treinamentos"]
+            score += 70 * SCORING_CONFIG["peso_treinamentos"]  # Era 40, agora 70
         elif employee.num_treinamentos < 2:
-            score += 20 * SCORING_CONFIG["peso_treinamentos"]
+            score += 40 * SCORING_CONFIG["peso_treinamentos"]  # Era 20, agora 40
     
-    # 4. Ausências (20%)
+    # 4. Ausências (20%) - EXPONENCIAL
     if employee.num_ausencias <= 2:
-        score += 5 * SCORING_CONFIG["peso_ausencias"]
+        score += 10 * SCORING_CONFIG["peso_ausencias"]  # Era 5, agora 10
     elif employee.num_ausencias <= 5:
-        score += 30 * SCORING_CONFIG["peso_ausencias"]
+        score += 40 * SCORING_CONFIG["peso_ausencias"]  # Era 30, agora 40
     elif employee.num_ausencias <= 10:
-        score += 60 * SCORING_CONFIG["peso_ausencias"]
+        score += 70 * SCORING_CONFIG["peso_ausencias"]  # Era 60, agora 70
     elif employee.num_ausencias <= 20:
-        score += 85 * SCORING_CONFIG["peso_ausencias"]
-    else:
+        score += 90 * SCORING_CONFIG["peso_ausencias"]  # Era 85, agora 90
+    else:  # 20+ ausências
         score += 100 * SCORING_CONFIG["peso_ausencias"]
+        
+        # Bônus MASSIVO para casos extremos
         if employee.num_ausencias >= 50:
-            score += 15
+            score += 25  # Era 15, agora 25 pontos extras!
+        elif employee.num_ausencias >= 30:
+            score += 15  # Novo: bônus para 30+
     
-    # 5. Bônus combinação crítica
-    if (employee.tempo_casa >= 2 and 
+    # 5. Bônus combinação crítica - MAIS AGRESSIVO
+    if (employee.tempo_casa >= 1 and 
         not employee.participou_pdi and 
         employee.num_treinamentos <= 1 and 
         employee.num_ausencias >= 20):
-        score += 20
+        score += 25  # Era 20, agora 25
+    
+    # 6. NOVO: Bônus para novatos problemáticos
+    if (employee.tempo_casa < 1 and 
+        not employee.participou_pdi and 
+        employee.num_treinamentos == 0 and 
+        employee.num_ausencias >= 30):
+        score += 20  # Bônus especial para novatos críticos
     
     return min(score, 100)
 
@@ -515,24 +526,212 @@ def render_dashboard():
     fig = create_risk_chart(employees)
     st.plotly_chart(fig, use_container_width=True)
     
-    # Lista de alto risco
-    st.markdown("### 🚨 Colaboradores em Alto Risco")
-    high_risk_employees = [e for e in employees if e.score_risco > 45]
+    # Lista COMPLETA de colaboradores com análise individual
+    st.markdown("### 👥 Análise Individual dos Colaboradores")
     
-    if high_risk_employees:
-        data = []
-        for emp in high_risk_employees:
-            data.append({
-                'Nome': emp.nome,
-                'Depto': emp.departamento,
-                'Score': f"{emp.score_risco:.1f}",
-                'Principal Problema': emp.fatores_risco[0] if emp.fatores_risco else 'N/A'
-            })
+    for i, emp in enumerate(employees):
+        risk_level = get_risk_level(emp.score_risco)
+        risk_color = get_risk_color(emp.score_risco)
         
-        df_risk = pd.DataFrame(data)
-        st.dataframe(df_risk, use_container_width=True, hide_index=True)
+        # Expandir para cada colaborador
+        with st.expander(f"{emp.nome} - {emp.departamento} | Score: {emp.score_risco:.1f} ({risk_level})", expanded=False):
+            
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                st.markdown("#### 📊 Dados Básicos")
+                st.write(f"**Cargo:** {emp.cargo}")
+                st.write(f"**Tempo de Casa:** {emp.tempo_casa} anos")
+                st.write(f"**PDI:** {'✅ Sim' if emp.participou_pdi else '❌ Não'}")
+                st.write(f"**Treinamentos:** {emp.num_treinamentos}")
+                st.write(f"**Ausências:** {emp.num_ausencias}")
+                
+                # Gauge do score
+                fig_gauge = go.Figure(go.Indicator(
+                    mode = "gauge+number",
+                    value = emp.score_risco,
+                    domain = {'x': [0, 1], 'y': [0, 1]},
+                    title = {'text': "Score de Risco"},
+                    gauge = {
+                        'axis': {'range': [None, 100]},
+                        'bar': {'color': risk_color},
+                        'steps': [
+                            {'range': [0, 20], 'color': "lightgreen"},
+                            {'range': [20, 45], 'color': "lightyellow"},
+                            {'range': [45, 100], 'color': "lightcoral"}
+                        ]
+                    }
+                ))
+                fig_gauge.update_layout(height=250, margin=dict(l=20, r=20, t=40, b=20))
+                st.plotly_chart(fig_gauge, use_container_width=True)
+            
+            with col2:
+                st.markdown("#### 🚨 Fatores de Risco Identificados")
+                if emp.fatores_risco:
+                    for j, fator in enumerate(emp.fatores_risco, 1):
+                        st.markdown(f"**{j}.** {fator}")
+                else:
+                    st.success("✅ Nenhum fator de risco crítico identificado")
+                
+                st.markdown("#### 💡 Recomendações de Ação")
+                if emp.acoes_recomendadas:
+                    for j, acao in enumerate(emp.acoes_recomendadas, 1):
+                        st.markdown(f"**{j}.** {acao}")
+                
+                # BOTÃO DE ANÁLISE DETALHADA
+                if st.button(f"🔍 Análise Detalhada", key=f"analise_{i}", use_container_width=True):
+                    st.markdown("#### 🔬 Breakdown Detalhado do Score")
+                    
+                    # Calcular cada componente
+                    breakdown = calcular_breakdown_score(emp)
+                    
+                    st.markdown(f"""
+                    **📊 Decomposição do Score ({emp.score_risco:.1f} pontos):**
+                    
+                    **1. ⏰ Tempo de Casa ({breakdown['tempo_casa']:.1f} pts):**
+                    - {emp.tempo_casa} anos na empresa
+                    - {breakdown['tempo_casa_desc']}
+                    
+                    **2. 📋 PDI ({breakdown['pdi']:.1f} pts):**
+                    - {'Participou' if emp.participou_pdi else 'NÃO participou'} nos últimos 12 meses
+                    - {breakdown['pdi_desc']}
+                    
+                    **3. 🎓 Treinamentos ({breakdown['treinamentos']:.1f} pts):**
+                    - {emp.num_treinamentos} treinamentos realizados
+                    - {breakdown['treinamentos_desc']}
+                    
+                    **4. 📅 Ausências ({breakdown['ausencias']:.1f} pts):**
+                    - {emp.num_ausencias} faltas nos últimos 6 meses
+                    - {breakdown['ausencias_desc']}
+                    
+                    **5. ⚡ Bônus/Penalizações ({breakdown['bonus']:.1f} pts):**
+                    - {breakdown['bonus_desc']}
+                    
+                    ---
+                    **🎯 TOTAL: {emp.score_risco:.1f} pontos = {risk_level.upper()} RISCO**
+                    """)
+                    
+                    # Recomendação urgente
+                    if emp.score_risco > 70:
+                        st.error("🚨 **AÇÃO URGENTE NECESSÁRIA!** Este colaborador apresenta risco crítico de saída.")
+                    elif emp.score_risco > 45:
+                        st.warning("⚠️ **ATENÇÃO NECESSÁRIA!** Monitorar de perto e implementar ações preventivas.")
+                    else:
+                        st.success("✅ **Situação controlada.** Manter acompanhamento regular.")
+
+def calcular_breakdown_score(employee: Employee) -> dict:
+    """Calcula breakdown detalhado do score para exibição"""
+    breakdown = {
+        'tempo_casa': 0,
+        'pdi': 0,
+        'treinamentos': 0,
+        'ausencias': 0,
+        'bonus': 0,
+        'tempo_casa_desc': '',
+        'pdi_desc': '',
+        'treinamentos_desc': '',
+        'ausencias_desc': '',
+        'bonus_desc': ''
+    }
+    
+    # Tempo de Casa
+    if employee.tempo_casa < 0.5:
+        breakdown['tempo_casa'] = 30 * SCORING_CONFIG["peso_tempo_casa"]
+        breakdown['tempo_casa_desc'] = "Muito novo (< 6 meses) - Risco alto de não adaptação"
+    elif employee.tempo_casa < 1:
+        breakdown['tempo_casa'] = 50 * SCORING_CONFIG["peso_tempo_casa"]
+        breakdown['tempo_casa_desc'] = "Pouco tempo (< 1 ano) - Risco de saída precoce"
+    elif employee.tempo_casa < 2:
+        breakdown['tempo_casa'] = 20 * SCORING_CONFIG["peso_tempo_casa"]
+        breakdown['tempo_casa_desc'] = "Tempo baixo (< 2 anos) - Ainda em consolidação"
     else:
-        st.success("✅ Nenhum colaborador em alto risco!")
+        breakdown['tempo_casa_desc'] = "Veterano - Estabilidade esperada"
+    
+    # PDI
+    if not employee.participou_pdi:
+        if employee.tempo_casa < 0.5:
+            breakdown['pdi'] = 60 * SCORING_CONFIG["peso_pdi"]
+            breakdown['pdi_desc'] = "Novato sem PDI - Falta de direcionamento"
+        elif employee.tempo_casa < 1:
+            breakdown['pdi'] = 80 * SCORING_CONFIG["peso_pdi"]
+            breakdown['pdi_desc'] = "Sem PDI há mais de 6 meses - Sinal de desengajamento"
+        elif employee.tempo_casa < 3:
+            breakdown['pdi'] = 90 * SCORING_CONFIG["peso_pdi"]
+            breakdown['pdi_desc'] = "Sem PDI há mais de 1 ano - Falta de desenvolvimento"
+        else:
+            breakdown['pdi'] = 100 * SCORING_CONFIG["peso_pdi"]
+            breakdown['pdi_desc'] = "Veterano sem PDI - CRÍTICO! Falta total de desenvolvimento"
+    else:
+        breakdown['pdi_desc'] = "Participou do PDI - Desenvolvimento ativo"
+    
+    # Treinamentos
+    if employee.tempo_casa >= 0.5:
+        if employee.num_treinamentos == 0:
+            breakdown['treinamentos'] = 100 * SCORING_CONFIG["peso_treinamentos"]
+            breakdown['treinamentos_desc'] = "ZERO treinamentos - Falta total de capacitação"
+        elif employee.num_treinamentos == 1:
+            breakdown['treinamentos'] = 80 * SCORING_CONFIG["peso_treinamentos"]
+            breakdown['treinamentos_desc'] = "Apenas 1 treinamento - Capacitação insuficiente"
+        elif employee.num_treinamentos < 3:
+            breakdown['treinamentos'] = 60 * SCORING_CONFIG["peso_treinamentos"]
+            breakdown['treinamentos_desc'] = f"Poucos treinamentos ({employee.num_treinamentos}) - Abaixo do esperado"
+        elif employee.num_treinamentos < 5:
+            breakdown['treinamentos'] = 30 * SCORING_CONFIG["peso_treinamentos"]
+            breakdown['treinamentos_desc'] = f"Treinamentos adequados ({employee.num_treinamentos})"
+        else:
+            breakdown['treinamentos_desc'] = f"Bem treinado ({employee.num_treinamentos} treinamentos)"
+    else:
+        if employee.num_treinamentos == 0:
+            breakdown['treinamentos'] = 70 * SCORING_CONFIG["peso_treinamentos"]
+            breakdown['treinamentos_desc'] = "Novato sem treinamentos - Necessita capacitação urgente"
+    
+    # Ausências
+    if employee.num_ausencias <= 2:
+        breakdown['ausencias'] = 10 * SCORING_CONFIG["peso_ausencias"]
+        breakdown['ausencias_desc'] = "Pontualidade excelente"
+    elif employee.num_ausencias <= 5:
+        breakdown['ausencias'] = 40 * SCORING_CONFIG["peso_ausencias"]
+        breakdown['ausencias_desc'] = "Ausências dentro do aceitável"
+    elif employee.num_ausencias <= 10:
+        breakdown['ausencias'] = 70 * SCORING_CONFIG["peso_ausencias"]
+        breakdown['ausencias_desc'] = "Ausências preocupantes - Investigar causas"
+    elif employee.num_ausencias <= 20:
+        breakdown['ausencias'] = 90 * SCORING_CONFIG["peso_ausencias"]
+        breakdown['ausencias_desc'] = "Ausências frequentes - Problema sério"
+    else:
+        breakdown['ausencias'] = 100 * SCORING_CONFIG["peso_ausencias"]
+        breakdown['ausencias_desc'] = "Ausências excessivas - CRÍTICO!"
+        
+        if employee.num_ausencias >= 50:
+            breakdown['bonus'] += 25
+        elif employee.num_ausencias >= 30:
+            breakdown['bonus'] += 15
+    
+    # Bônus combinações
+    bonus_desc = []
+    
+    if (employee.tempo_casa >= 1 and 
+        not employee.participou_pdi and 
+        employee.num_treinamentos <= 1 and 
+        employee.num_ausencias >= 20):
+        breakdown['bonus'] += 25
+        bonus_desc.append("Combinação crítica: Veterano problemático (+25 pts)")
+    
+    if (employee.tempo_casa < 1 and 
+        not employee.participou_pdi and 
+        employee.num_treinamentos == 0 and 
+        employee.num_ausencias >= 30):
+        breakdown['bonus'] += 20
+        bonus_desc.append("Novato problemático (+20 pts)")
+    
+    if employee.num_ausencias >= 50:
+        bonus_desc.append("Ausências extremas (+25 pts)")
+    elif employee.num_ausencias >= 30:
+        bonus_desc.append("Ausências muito altas (+15 pts)")
+    
+    breakdown['bonus_desc'] = '; '.join(bonus_desc) if bonus_desc else "Nenhum bônus aplicado"
+    
+    return breakdown
 
 def render_export():
     if not st.session_state.employees:
@@ -553,22 +752,24 @@ def render_export():
 
 # Teste do algoritmo
 def teste_algoritmo():
-    st.markdown("### 🧪 Teste do Algoritmo")
+    st.markdown("### 🧪 Teste do Algoritmo ULTRA Rigoroso")
     
-    if st.button("🧪 Testar Caso Crítico"):
-        funcionario_teste = Employee(
-            nome="Funcionário Crítico",
+    if st.button("🧪 Testar Caso do Vinicius"):
+        # Caso real do Vinicius
+        funcionario_vinicius = Employee(
+            nome="Vinicius Paschoa",
             departamento="TI",
-            cargo="Desenvolvedor",
-            tempo_casa=7.0,
+            cargo="Especialista de IA",
+            tempo_casa=0.3,  # 3.6 meses
             participou_pdi=False,
             num_treinamentos=0,
             num_ausencias=50
         )
         
-        score = calcular_score_risco(funcionario_teste)
+        score = calcular_score_risco(funcionario_vinicius)
         nivel = get_risk_level(score)
-        fatores = identificar_fatores_risco(funcionario_teste)
+        fatores = identificar_fatores_risco(funcionario_vinicius)
+        breakdown = calcular_breakdown_score(funcionario_vinicius)
         
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -578,9 +779,58 @@ def teste_algoritmo():
         with col3:
             st.metric("Fatores", len(fatores))
         
-        st.markdown("**Fatores detectados:**")
+        st.markdown(f"""
+        **🔥 BREAKDOWN DETALHADO PARA VINICIUS:**
+        
+        **1. ⏰ Tempo de Casa:** {breakdown['tempo_casa']:.1f} pts
+        - 0.3 anos (3.6 meses) - Muito novo na empresa
+        
+        **2. 📋 PDI:** {breakdown['pdi']:.1f} pts  
+        - NÃO participou - Novato sem direcionamento
+        
+        **3. 🎓 Treinamentos:** {breakdown['treinamentos']:.1f} pts
+        - ZERO treinamentos - Falta total de capacitação
+        
+        **4. 📅 Ausências:** {breakdown['ausencias']:.1f} pts
+        - 50 ausências - EXTREMAMENTE CRÍTICO!
+        
+        **5. ⚡ Bônus:** {breakdown['bonus']:.1f} pts
+        - Novato problemático + Ausências extremas
+        
+        **🎯 TOTAL: {score:.1f} pontos = {nivel.upper()} RISCO**
+        """)
+        
+        if score < 80:
+            st.error(f"🚨 AINDA MUITO BAIXO! Esperado: 80+ pontos, Atual: {score:.1f}")
+        else:
+            st.success(f"✅ SCORE ADEQUADO! {score:.1f} pontos reflete o risco real")
+        
+        st.markdown("**🚨 Fatores detectados:**")
         for fator in fatores:
             st.markdown(f"• {fator}")
+    
+    # Teste adicional
+    if st.button("🧪 Testar Caso Veterano Crítico"):
+        funcionario_veterano = Employee(
+            nome="Veterano Problemático", 
+            departamento="TI",
+            cargo="Desenvolvedor",
+            tempo_casa=7.0,
+            participou_pdi=False,
+            num_treinamentos=0,
+            num_ausencias=50
+        )
+        
+        score = calcular_score_risco(funcionario_veterano)
+        nivel = get_risk_level(score)
+        
+        st.metric("Veterano - Score", f"{score:.1f}/100")
+        st.metric("Nível", nivel)
+        
+        if score < 85:
+            st.error(f"🚨 Veterano crítico deveria ter 85+ pontos! Atual: {score:.1f}")
+        else:
+            st.success(f"✅ Score adequado para veterano crítico: {score:.1f}")
 
 if __name__ == "__main__":
     main()
