@@ -598,26 +598,76 @@ def render_home_page():
     
     with col1:
         if st.button("📥 Baixar Planilha Modelo", use_container_width=True):
-            # Criar planilha modelo
+            # Criar planilha modelo realista
             modelo_data = {
-                'nome': ['João Silva', 'Maria Santos', 'Pedro Costa'],
-                'departamento': ['Vendas', 'Marketing', 'TI'],
-                'cargo': ['Vendedor', 'Analista', 'Desenvolvedor'],
-                'tempo_casa': [0.5, 2.3, 1.8],
-                'participou_pdi': ['Não', 'Sim', 'Sim'],
-                'num_treinamentos': [0, 3, 2],
-                'num_ausencias': [8, 1, 2]
+                'nome': [
+                    'João Silva Santos', 'Maria Oliveira Costa', 'Pedro Henrique Lima',
+                    'Ana Carolina Souza', 'Lucas Fernando Alves', 'Juliana Mendes Pereira',
+                    'Rafael Santos Cruz', 'Camila Rodrigues Ferreira', 'Diego Machado Dias',
+                    'Fernanda Lima Cardoso'
+                ],
+                'departamento': [
+                    'Vendas', 'Marketing', 'TI', 'RH', 'Financeiro',
+                    'Operações', 'Vendas', 'Marketing', 'TI', 'RH'
+                ],
+                'cargo': [
+                    'Vendedor Sênior', 'Analista de Marketing', 'Desenvolvedor Jr',
+                    'Analista de RH', 'Assistente Financeiro', 'Coordenador de Operações',
+                    'Vendedor Pleno', 'Assistente de Marketing', 'Analista de Sistemas',
+                    'Generalista de RH'
+                ],
+                'tempo_casa': [
+                    0.3, 2.5, 1.2, 4.1, 0.8, 3.2, 1.8, 0.5, 2.1, 6.3
+                ],
+                'participou_pdi': [
+                    'Não', 'Sim', 'Sim', 'Sim', 'Não', 'Sim', 'Não', 'Não', 'Sim', 'Sim'
+                ],
+                'num_treinamentos': [
+                    0, 4, 2, 6, 1, 5, 1, 0, 3, 8
+                ],
+                'num_ausencias': [
+                    8, 2, 1, 0, 12, 1, 6, 15, 2, 1
+                ]
             }
             
             df_modelo = pd.DataFrame(modelo_data)
-            excel_data = export_to_excel([])  # Função simplificada para modelo
+            
+            # Criar arquivo Excel
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df_modelo.to_excel(writer, sheet_name='Dados_Colaboradores', index=False)
+                
+                # Adicionar uma aba com instruções
+                instrucoes = pd.DataFrame({
+                    'Coluna': ['nome', 'departamento', 'cargo', 'tempo_casa', 'participou_pdi', 'num_treinamentos', 'num_ausencias'],
+                    'Descrição': [
+                        'Nome completo do colaborador',
+                        'Departamento ou área de trabalho',
+                        'Cargo atual',
+                        'Tempo de casa em anos (ex: 1.5 para 1 ano e 6 meses)',
+                        'Participou de PDI nos últimos 12 meses (Sim/Não)',
+                        'Número de treinamentos realizados no último ano',
+                        'Número de faltas/ausências nos últimos 6 meses'
+                    ],
+                    'Exemplo': [
+                        'João Silva Santos',
+                        'Vendas',
+                        'Vendedor Sênior',
+                        '2.5',
+                        'Sim',
+                        '4',
+                        '2'
+                    ]
+                })
+                instrucoes.to_excel(writer, sheet_name='Instruções', index=False)
             
             st.download_button(
                 label="💾 Download Modelo.xlsx",
-                data=excel_data,
+                data=output.getvalue(),
                 file_name="modelo_radar_rh.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+            st.success("✅ Planilha modelo criada! Use como base para seus dados.")
     
     with col2:
         if st.button("📤 Fazer Upload", use_container_width=True):
@@ -916,7 +966,7 @@ def render_analysis_page():
                 if has_openai() and HAS_OPENAI:
                     if st.button(f"🤖 Gerar Insights IA", key=f"ai_{i}"):
                         try:
-                            openai.api_key = get_openai_key()
+                            client = openai.OpenAI(api_key=get_openai_key())
                             
                             prompt = f"""
                             Analise este colaborador e forneça insights personalizados:
@@ -934,7 +984,7 @@ def render_analysis_page():
                             3. Abordagem recomendada
                             """
                             
-                            response = openai.ChatCompletion.create(
+                            response = client.chat.completions.create(
                                 model="gpt-3.5-turbo",
                                 messages=[
                                     {"role": "system", "content": "Você é um especialista em RH e retenção de talentos."},
@@ -949,6 +999,23 @@ def render_analysis_page():
                             
                         except Exception as e:
                             st.error(f"Erro ao gerar insights: {str(e)}")
+                            # Fallback para versão antiga da API
+                            try:
+                                openai.api_key = get_openai_key()
+                                response = openai.ChatCompletion.create(
+                                    model="gpt-3.5-turbo",
+                                    messages=[
+                                        {"role": "system", "content": "Você é um especialista em RH e retenção de talentos."},
+                                        {"role": "user", "content": prompt}
+                                    ],
+                                    max_tokens=200,
+                                    temperature=0.7
+                                )
+                                st.markdown("#### 🤖 Insights da IA")
+                                st.markdown(f'<div class="alert-info">{response.choices[0].message.content}</div>', unsafe_allow_html=True)
+                            except Exception as e2:
+                                st.error(f"Erro na API OpenAI: {str(e2)}")
+                                st.info("💡 Verifique se sua chave OpenAI está correta nos Secrets")
                 elif not HAS_OPENAI:
                     st.info("💡 Instale a biblioteca OpenAI para usar insights de IA")
                 elif not has_openai():
