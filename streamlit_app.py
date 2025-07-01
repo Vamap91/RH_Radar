@@ -1,6 +1,6 @@
 """
-🎯 Radar RH - Sistema de Análise de Rotatividade e Engajamento
-Versão completa e funcional
+🎯 Radar RH - Sistema Simplificado (Apenas Excel)
+Versão focada em análise direta via planilha Excel
 """
 
 import streamlit as st
@@ -8,55 +8,33 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
-import base64
 import io
 import json
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
-
-# Imports opcionais com tratamento de erro
-try:
-    import fitz  # PyMuPDF
-    HAS_PDF_SUPPORT = True
-except ImportError:
-    HAS_PDF_SUPPORT = False
-
-try:
-    import openai
-    HAS_OPENAI = True
-except ImportError:
-    HAS_OPENAI = False
 
 # ================================
 # CONFIGURAÇÕES E CONSTANTES
 # ================================
 
 st.set_page_config(
-    page_title="Radar RH - Análise de Rotatividade",
+    page_title="Radar RH - Análise Simplificada",
     page_icon="🎯",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Configurações de scoring rebalanceadas
+# Configurações de scoring SIMPLIFICADAS (sem LinkedIn)
 SCORING_CONFIG = {
-    "peso_tempo_casa": 0.30,      # Diminuído um pouco
-    "peso_pdi": 0.15,             # Mantido
-    "peso_treinamentos": 0.15,    # Mantido
-    "peso_linkedin": 0.20,        # Diminuído
-    "peso_ausencias": 0.20,       # AUMENTADO - ausências são críticas
-    
-    # Thresholds mais realistas
-    "tempo_casa_critico": 0.25,   # 3 meses (muito crítico)
-    "tempo_casa_risco": 1.0,      # 1 ano (ainda em risco)
-    "tempo_casa_estavel": 2.0,    # 2 anos (considerado estável)
-    
-    "treinamentos_minimo": 1,     # Mais realista
-    "ausencias_critico": 5,       # VOLTOU para 5 - mais rigoroso
-    "ausencias_grave": 10,        # Novo threshold para casos graves
-    
-    "risco_baixo": 20,            # Mais rigoroso
-    "risco_medio": 45,            # Mais rigoroso  
+    "peso_tempo_casa": 0.25,     # 25%
+    "peso_pdi": 0.30,           # 30% (aumentado)
+    "peso_treinamentos": 0.25,   # 25% (aumentado)
+    "peso_ausencias": 0.20,      # 20%
+    "tempo_casa_critico": 0.5,
+    "treinamentos_minimo": 2,
+    "ausencias_critico": 5,
+    "risco_baixo": 20,
+    "risco_medio": 45,
     "risco_alto": 100
 }
 
@@ -83,42 +61,258 @@ class Employee:
     participou_pdi: bool
     num_treinamentos: int
     num_ausencias: int
-    linkedin_data: Dict = None
     score_risco: float = 0
     fatores_risco: List[str] = None
     acoes_recomendadas: List[str] = None
 
 # ================================
-# FUNÇÕES DE CONFIGURAÇÃO
+# FUNÇÕES DE ANÁLISE SIMPLIFICADAS
 # ================================
 
-def get_openai_key():
-    """Obtém a chave OpenAI dos secrets"""
-    try:
-        return st.secrets.get("OPENAI_API_KEY", "")
-    except:
-        return ""
+def calcular_score_risco(employee: Employee) -> float:
+    """
+    🎯 Cálculo de score SIMPLIFICADO (apenas dados Excel)
+    Foco total nos 4 indicadores principais
+    """
+    score = 0
+    
+    # ================================
+    # 1. FATOR TEMPO DE CASA (Peso: 25%)
+    # ================================
+    if employee.tempo_casa < 0.5:  # < 6 meses
+        score += 15 * SCORING_CONFIG["peso_tempo_casa"]  # Risco moderado
+    elif employee.tempo_casa < 1:  # 6-12 meses
+        score += 35 * SCORING_CONFIG["peso_tempo_casa"]  # Risco alto
+    elif employee.tempo_casa < 2:  # 1-2 anos
+        score += 20 * SCORING_CONFIG["peso_tempo_casa"]  # Risco baixo
+    # Sem penalização para veteranos
+    
+    # ================================
+    # 2. FATOR PDI (Peso: 30%) - PESO AUMENTADO
+    # ================================
+    if not employee.participou_pdi:
+        if employee.tempo_casa < 0.5:  # Novatos - tolerante
+            score += 15 * SCORING_CONFIG["peso_pdi"]
+        elif employee.tempo_casa < 1:  # 6-12 meses
+            score += 50 * SCORING_CONFIG["peso_pdi"]
+        elif employee.tempo_casa < 3:  # 1-3 anos
+            score += 75 * SCORING_CONFIG["peso_pdi"]
+        else:  # Veteranos (3+ anos) - CRÍTICO
+            score += 100 * SCORING_CONFIG["peso_pdi"]  # 30 pontos!
+    
+    # ================================
+    # 3. FATOR TREINAMENTOS (Peso: 25%) - PESO AUMENTADO
+    # ================================
+    if employee.tempo_casa >= 1:  # Para quem tem mais de 1 ano
+        if employee.num_treinamentos == 0:
+            score += 100 * SCORING_CONFIG["peso_treinamentos"]  # 25 pontos!
+        elif employee.num_treinamentos == 1:
+            score += 75 * SCORING_CONFIG["peso_treinamentos"]
+        elif employee.num_treinamentos < 3:
+            score += 50 * SCORING_CONFIG["peso_treinamentos"]
+        elif employee.num_treinamentos < 5:
+            score += 25 * SCORING_CONFIG["peso_treinamentos"]
+    else:  # Novatos - mais tolerante
+        if employee.num_treinamentos == 0:
+            score += 40 * SCORING_CONFIG["peso_treinamentos"]
+        elif employee.num_treinamentos < 2:
+            score += 20 * SCORING_CONFIG["peso_treinamentos"]
+    
+    # ================================
+    # 4. FATOR AUSÊNCIAS (Peso: 20%)
+    # ================================
+    if employee.num_ausencias <= 2:
+        score += 5 * SCORING_CONFIG["peso_ausencias"]   # Ótimo
+    elif employee.num_ausencias <= 5:
+        score += 30 * SCORING_CONFIG["peso_ausencias"]  # Aceitável
+    elif employee.num_ausencias <= 10:
+        score += 60 * SCORING_CONFIG["peso_ausencias"]  # Preocupante
+    elif employee.num_ausencias <= 20:
+        score += 85 * SCORING_CONFIG["peso_ausencias"]  # Grave
+    else:  # 20+ ausências
+        score += 100 * SCORING_CONFIG["peso_ausencias"] # Crítico
+        
+        # BÔNUS EXTRA para casos extremos
+        if employee.num_ausencias >= 50:
+            score += 15  # +15 pontos extras!
+    
+    # ================================
+    # 5. BÔNUS DE COMBINAÇÃO CRÍTICA
+    # ================================
+    # Veterano + sem PDI + poucos treinos + muitas ausências
+    if (employee.tempo_casa >= 2 and 
+        not employee.participou_pdi and 
+        employee.num_treinamentos <= 1 and 
+        employee.num_ausencias >= 20):
+        score += 20  # BÔNUS CRÍTICO
+    
+    return min(score, 100)
 
-def has_openai():
-    """Verifica se OpenAI está configurada"""
-    if not HAS_OPENAI:
-        return False
-    key = get_openai_key()
-    return bool(key and key.strip())
+def identificar_fatores_risco(employee: Employee) -> List[str]:
+    """Identifica fatores de risco (versão simplificada)"""
+    fatores = []
+    
+    # Tempo de casa
+    if employee.tempo_casa < 0.5:
+        fatores.append("⚠️ Muito novo na empresa (< 6 meses)")
+    elif employee.tempo_casa < 1:
+        fatores.append("⚠️ Pouco tempo de casa (< 1 ano)")
+    elif employee.tempo_casa < 2:
+        fatores.append("📝 Tempo de casa baixo (< 2 anos)")
+    
+    # PDI - Mais rigoroso para veteranos
+    if not employee.participou_pdi:
+        if employee.tempo_casa >= 3:
+            fatores.append("🚨 CRÍTICO: Veterano sem PDI (inaceitável)")
+        elif employee.tempo_casa >= 1:
+            fatores.append("⚠️ Sem PDI nos últimos 12 meses")
+        else:
+            fatores.append("📝 PDI pendente (novato)")
+    
+    # Treinamentos
+    if employee.tempo_casa >= 1:
+        if employee.num_treinamentos == 0:
+            fatores.append("🚨 CRÍTICO: Zero treinamentos (inaceitável)")
+        elif employee.num_treinamentos == 1:
+            fatores.append("⚠️ Apenas 1 treinamento realizado")
+        elif employee.num_treinamentos < 3:
+            fatores.append(f"📚 Poucos treinamentos ({employee.num_treinamentos})")
+    else:
+        if employee.num_treinamentos == 0:
+            fatores.append("📚 Sem treinamentos ainda (novato)")
+    
+    # Ausências
+    if employee.num_ausencias >= 50:
+        fatores.append(f"🚨 CRÍTICO: Ausências extremas ({employee.num_ausencias})")
+    elif employee.num_ausencias >= 20:
+        fatores.append(f"🚨 Ausências muito frequentes ({employee.num_ausencias})")
+    elif employee.num_ausencias > 10:
+        fatores.append(f"⚠️ Ausências frequentes ({employee.num_ausencias})")
+    elif employee.num_ausencias > 5:
+        fatores.append(f"⚠️ Ausências preocupantes ({employee.num_ausencias})")
+    
+    # Combinação crítica
+    if (employee.tempo_casa >= 2 and 
+        not employee.participou_pdi and 
+        employee.num_treinamentos <= 1 and 
+        employee.num_ausencias >= 20):
+        fatores.append("🚨 ALERTA MÁXIMO: Múltiplos fatores críticos")
+    
+    return fatores
+
+def gerar_recomendacoes(fatores_risco: List[str], employee: Employee) -> List[str]:
+    """Gera recomendações (versão simplificada)"""
+    recomendacoes = []
+    
+    # Para casos críticos
+    if "CRÍTICO" in str(fatores_risco):
+        recomendacoes.append("🚨 URGENTE: Reunião imediata com RH")
+        recomendacoes.append("📋 Plano de ação em 48h")
+    
+    # Tempo de casa
+    if any("novo" in f or "Pouco tempo" in f for f in fatores_risco):
+        recomendacoes.append("👥 Programa de mentoria")
+        recomendacoes.append("📅 Check-ins semanais")
+    
+    # PDI
+    if "Veterano sem PDI" in str(fatores_risco):
+        recomendacoes.append("📋 PDI emergencial (7 dias)")
+    elif "Sem PDI" in str(fatores_risco):
+        recomendacoes.append("📋 Agendar PDI (15 dias)")
+    
+    # Treinamentos
+    if "Zero treinamentos" in str(fatores_risco):
+        recomendacoes.append("🎓 Trilha de desenvolvimento urgente")
+    elif "Poucos treinamentos" in str(fatores_risco):
+        recomendacoes.append("📖 Ampliar capacitação")
+    
+    # Ausências
+    if "extremas" in str(fatores_risco):
+        recomendacoes.append("🏥 Avaliação médica/psicológica")
+    elif "muito frequentes" in str(fatores_risco):
+        recomendacoes.append("💬 Investigar causas das ausências")
+    
+    # Combinação crítica
+    if "ALERTA MÁXIMO" in str(fatores_risco):
+        recomendacoes.append("🚨 COMITÊ DE RETENÇÃO")
+        recomendacoes.append("💰 Avaliar proposta de retenção")
+    
+    if not recomendacoes:
+        recomendacoes.append("✅ Acompanhamento regular")
+        recomendacoes.append("🏆 Reconhecimento")
+    
+    return recomendacoes
+
+def get_risk_level(score: float) -> str:
+    """Níveis de risco"""
+    if score <= SCORING_CONFIG["risco_baixo"]:
+        return "Baixo"
+    elif score <= SCORING_CONFIG["risco_medio"]:
+        return "Médio"
+    else:
+        return "Alto"
+
+def get_risk_color(score: float) -> str:
+    """Cores por nível de risco"""
+    if score <= SCORING_CONFIG["risco_baixo"]:
+        return COLORS["success"]
+    elif score <= SCORING_CONFIG["risco_medio"]:
+        return COLORS["secondary"]
+    else:
+        return COLORS["warning"]
 
 # ================================
-# FUNÇÕES DE ESTILO
+# FUNÇÕES DE PROCESSAMENTO
+# ================================
+
+def processar_planilha(df: pd.DataFrame) -> List[Employee]:
+    """Processa planilha Excel"""
+    employees = []
+    
+    # Padronizar colunas
+    df.columns = df.columns.str.lower().str.strip().str.replace(' ', '_')
+    
+    required_columns = ['nome', 'departamento', 'cargo', 'tempo_casa', 'participou_pdi', 'num_treinamentos', 'num_ausencias']
+    
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        st.error(f"❌ Colunas ausentes: {', '.join(missing_columns)}")
+        return employees
+    
+    for _, row in df.iterrows():
+        try:
+            employee = Employee(
+                nome=str(row['nome']).strip(),
+                departamento=str(row['departamento']).strip(),
+                cargo=str(row['cargo']).strip(),
+                tempo_casa=float(row['tempo_casa']),
+                participou_pdi=str(row['participou_pdi']).lower() in ['sim', 'yes', 'true', '1'],
+                num_treinamentos=int(row['num_treinamentos']),
+                num_ausencias=int(row['num_ausencias'])
+            )
+            
+            employee.score_risco = calcular_score_risco(employee)
+            employee.fatores_risco = identificar_fatores_risco(employee)
+            employee.acoes_recomendadas = gerar_recomendacoes(employee.fatores_risco, employee)
+            
+            employees.append(employee)
+            
+        except Exception as e:
+            st.warning(f"⚠️ Erro ao processar {row.get('nome', 'N/A')}: {str(e)}")
+    
+    return employees
+
+# ================================
+# FUNÇÕES DE VISUALIZAÇÃO
 # ================================
 
 def apply_custom_css():
-    """Aplica CSS customizado"""
+    """CSS customizado"""
     st.markdown(f"""
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-        
         .main .block-container {{
             padding-top: 2rem;
-            font-family: 'Inter', sans-serif;
+            font-family: 'Arial', sans-serif;
         }}
         
         .custom-header {{
@@ -143,18 +337,9 @@ def apply_custom_css():
         .risk-medium {{ border-left-color: {COLORS['secondary']}; }}
         .risk-low {{ border-left-color: {COLORS['success']}; }}
         
-        .stButton > button {{
-            background: linear-gradient(135deg, {COLORS['primary']} 0%, {COLORS['secondary']} 100%);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-weight: 500;
-            transition: all 0.3s;
-        }}
-        
-        .alert-info {{
-            background: rgba(31, 119, 180, 0.1);
-            border-left: 4px solid {COLORS['primary']};
+        .alert-warning {{
+            background: rgba(214, 39, 40, 0.1);
+            border-left: 4px solid {COLORS['warning']};
             padding: 1rem;
             border-radius: 8px;
             margin: 1rem 0;
@@ -167,19 +352,11 @@ def apply_custom_css():
             border-radius: 8px;
             margin: 1rem 0;
         }}
-        
-        .alert-warning {{
-            background: rgba(214, 39, 40, 0.1);
-            border-left: 4px solid {COLORS['warning']};
-            padding: 1rem;
-            border-radius: 8px;
-            margin: 1rem 0;
-        }}
     </style>
     """, unsafe_allow_html=True)
 
 def create_metric_card(title: str, value: str, risk_level: str = "low"):
-    """Cria um card de métrica"""
+    """Card de métrica"""
     risk_class = f"risk-{risk_level}"
     return f"""
     <div class="metric-card {risk_class}">
@@ -188,413 +365,8 @@ def create_metric_card(title: str, value: str, risk_level: str = "low"):
     </div>
     """
 
-# ================================
-# FUNÇÕES DE ANÁLISE
-# ================================
-
-def calcular_score_risco(employee: Employee) -> float:
-    """Calcula o score de risco do colaborador com lógica contextual melhorada"""
-    score = 0
-    
-    # 1. FATOR TEMPO DE CASA (35% - o mais importante)
-    tempo_casa = employee.tempo_casa
-    
-    if tempo_casa < SCORING_CONFIG["tempo_casa_critico"]:  # < 3 meses
-        score += 60 * SCORING_CONFIG["peso_tempo_casa"]  # Alto risco inicial
-    elif tempo_casa < SCORING_CONFIG["tempo_casa_risco"]:  # 3 meses - 1 ano
-        # Risco decresce gradualmente
-        risco_tempo = 40 - (tempo_casa * 20)  # De 40 a 20
-        score += max(risco_tempo, 10) * SCORING_CONFIG["peso_tempo_casa"]
-    elif tempo_casa < SCORING_CONFIG["tempo_casa_estavel"]:  # 1-2 anos
-        score += 15 * SCORING_CONFIG["peso_tempo_casa"]  # Risco baixo
-    # Acima de 2 anos = sem penalização por tempo
-    
-    # 2. FATOR PDI (15% - contextual por tempo de casa)
-    if not employee.participou_pdi:
-        if tempo_casa < 0.5:  # < 6 meses - normal não ter PDI
-            score += 10 * SCORING_CONFIG["peso_pdi"]
-        elif tempo_casa < 1.0:  # 6 meses - 1 ano - começa a ser importante
-            score += 30 * SCORING_CONFIG["peso_pdi"]
-        else:  # > 1 ano - muito importante ter PDI
-            score += 60 * SCORING_CONFIG["peso_pdi"]
-    
-    # 3. FATOR TREINAMENTOS (15% - contextual por tempo de casa)
-    treinamentos_esperados = max(1, int(tempo_casa * 2))  # 2 por ano esperado
-    deficit_treinamentos = max(0, treinamentos_esperados - employee.num_treinamentos)
-    
-    if tempo_casa < 0.5:  # < 6 meses - não espera muitos treinamentos
-        if employee.num_treinamentos == 0:
-            score += 20 * SCORING_CONFIG["peso_treinamentos"]
-    else:  # > 6 meses - começa a esperar treinamentos
-        score += min(deficit_treinamentos * 20, 50) * SCORING_CONFIG["peso_treinamentos"]
-    
-    # 4. FATOR AUSÊNCIAS (20% - agora mais rigoroso e proporcional)
-    ausencias = employee.num_ausencias
-    
-    if ausencias == 0:
-        # Perfeito - sem penalização
-        pass
-    elif ausencias <= 2:
-        # Aceitável - penalização mínima
-        score += 10 * SCORING_CONFIG["peso_ausencias"]
-    elif ausencias <= SCORING_CONFIG["ausencias_critico"]:  # 3-5 ausências
-        # Preocupante - penalização moderada
-        score += 40 * SCORING_CONFIG["peso_ausencias"]
-    elif ausencias <= SCORING_CONFIG["ausencias_grave"]:  # 6-10 ausências
-        # Grave - penalização alta
-        score += 70 * SCORING_CONFIG["peso_ausencias"]
-    else:  # > 10 ausências
-        # Crítico - penalização máxima
-        score += 100 * SCORING_CONFIG["peso_ausencias"]
-    
-    # 5. FATOR LINKEDIN (25% - quando disponível)
-    if employee.linkedin_data:
-        if employee.linkedin_data.get("ativo_recentemente", False):
-            score += 50 * SCORING_CONFIG["peso_linkedin"]
-        if employee.linkedin_data.get("mudancas_frequentes", False):
-            score += 30 * SCORING_CONFIG["peso_linkedin"]
-    
-    return min(score, 100)
-
-def identificar_fatores_risco(employee: Employee) -> List[str]:
-    """Identifica os fatores de risco do colaborador com análise contextual"""
-    fatores = []
-    tempo_casa = employee.tempo_casa
-    
-    # Fatores relacionados ao tempo de casa
-    if tempo_casa < SCORING_CONFIG["tempo_casa_critico"]:
-        fatores.append("Colaborador muito novo (< 3 meses) - período crítico de adaptação")
-    elif tempo_casa < SCORING_CONFIG["tempo_casa_risco"]:
-        fatores.append("Colaborador em período de risco (< 1 ano)")
-    elif tempo_casa < SCORING_CONFIG["tempo_casa_estavel"]:
-        fatores.append("Colaborador em processo de estabilização (1-2 anos)")
-    
-    # PDI contextual
-    if not employee.participou_pdi:
-        if tempo_casa < 0.5:
-            fatores.append("PDI não realizado (normal para colaborador muito novo)")
-        elif tempo_casa < 1.0:
-            fatores.append("PDI não realizado (recomendado após 6 meses)")
-        else:
-            fatores.append("PDI não realizado (crítico para colaborador experiente)")
-    
-    # Treinamentos contextuais
-    treinamentos_esperados = max(1, int(tempo_casa * 2))
-    if employee.num_treinamentos < treinamentos_esperados:
-        if tempo_casa < 0.5:
-            if employee.num_treinamentos == 0:
-                fatores.append("Nenhum treinamento realizado (considerar treinamento de integração)")
-        else:
-            deficit = treinamentos_esperados - employee.num_treinamentos
-            fatores.append(f"Déficit de treinamentos: {employee.num_treinamentos} realizados de {treinamentos_esperados} esperados")
-    
-    # Ausências - análise mais rigorosa
-    ausencias = employee.num_ausencias
-    
-    if ausencias == 0:
-        # Excelente comportamento
-        pass
-    elif ausencias <= 2:
-        fatores.append(f"Poucas ausências ({ausencias}) - dentro do aceitável")
-    elif ausencias <= SCORING_CONFIG["ausencias_critico"]:  # 3-5
-        fatores.append(f"Ausências moderadas ({ausencias} faltas) - requer atenção")
-    elif ausencias <= SCORING_CONFIG["ausencias_grave"]:  # 6-10
-        fatores.append(f"Ausências frequentes ({ausencias} faltas) - problema sério")
-    else:  # > 10
-        fatores.append(f"Ausências excessivas ({ausencias} faltas) - situação crítica que requer intervenção imediata")
-    
-    # LinkedIn
-    if employee.linkedin_data:
-        if employee.linkedin_data.get("ativo_recentemente", False):
-            fatores.append("Perfil LinkedIn com atividade recente (possível busca ativa)")
-        if employee.linkedin_data.get("mudancas_frequentes", False):
-            fatores.append("Histórico de mudanças frequentes de empresa no LinkedIn")
-        if employee.linkedin_data.get("certificacoes_recentes", False):
-            fatores.append("Certificações/cursos recentes no LinkedIn (desenvolvimento próprio)")
-    
-    # Se não há fatores de risco significativos
-    if not fatores:
-        if tempo_casa >= 2 and employee.participou_pdi and employee.num_ausencias <= 3:
-            fatores.append("Perfil estável - baixo risco de saída")
-    
-    return fatores
-
-def gerar_recomendacoes(fatores_risco: List[str], employee: Employee) -> List[str]:
-    """Gera recomendações de ação baseadas nos fatores de risco"""
-    recomendacoes = []
-    
-    # Analisar fatores específicos
-    fatores_str = ' '.join(fatores_risco).lower()
-    
-    # Recomendações para tempo de casa
-    if any("muito novo" in fator.lower() or "período crítico" in fator.lower() for fator in fatores_risco):
-        recomendacoes.append("URGENTE: Implementar programa de mentoria intensiva para novos colaboradores")
-        recomendacoes.append("Agendar check-ins semanais com gestor direto nos primeiros 90 dias")
-    elif any("período de risco" in fator.lower() for fator in fatores_risco):
-        recomendacoes.append("Intensificar acompanhamento com reuniões quinzenais")
-        recomendacoes.append("Avaliar satisfação e expectativas do colaborador")
-    
-    # Recomendações para PDI
-    if any("pdi" in fator.lower() for fator in fatores_risco):
-        if employee.tempo_casa >= 0.5:
-            recomendacoes.append("PRIORIDADE: Agendar reunião de PDI imediatamente")
-            recomendacoes.append("Definir plano de carreira claro com metas de curto prazo")
-        else:
-            recomendacoes.append("Agendar PDI para após completar 6 meses na empresa")
-    
-    # Recomendações para treinamentos
-    if any("treinamentos" in fator.lower() or "déficit" in fator.lower() for fator in fatores_risco):
-        recomendacoes.append("Criar trilha de desenvolvimento técnico personalizada")
-        recomendacoes.append("Inscrever em cursos internos e externos relevantes para o cargo")
-    
-    # Recomendações para ausências - MAIS ESPECÍFICAS
-    if employee.num_ausencias > 10:
-        recomendacoes.append("🚨 AÇÃO IMEDIATA: Reunião disciplinar formal com RH")
-        recomendacoes.append("🚨 Investigar causas das ausências e implementar plano de ação")
-        recomendacoes.append("🚨 Estabelecer acompanhamento diário da frequência")
-        recomendacoes.append("🚨 Avaliar necessidade de medidas disciplinares")
-    elif employee.num_ausencias > 5:
-        recomendacoes.append("⚠️ URGENTE: Conversa individual para entender causas das ausências")
-        recomendacoes.append("⚠️ Implementar plano de acompanhamento semanal da frequência")
-        recomendacoes.append("⚠️ Avaliar necessidade de suporte médico/pessoal")
-    elif employee.num_ausencias > 2:
-        recomendacoes.append("Monitorar padrão de ausências e conversar sobre expectativas")
-        recomendacoes.append("Verificar se há questões pessoais ou de saúde que a empresa pode apoiar")
-    
-    # Recomendações para LinkedIn
-    if any("linkedin" in fator.lower() for fator in fatores_risco):
-        if "atividade recente" in fatores_str:
-            recomendacoes.append("🔍 Conduzir pesquisa de satisfação confidencial urgente")
-            recomendacoes.append("🔍 Agendar 1:1 estratégico para discussão de carreira e retenção")
-        if "mudanças frequentes" in fatores_str:
-            recomendacoes.append("Avaliar estabilidade desejada e oferecer incentivos de longo prazo")
-    
-    # Recomendações gerais se não há problemas específicos
-    if not recomendacoes:
-        recomendacoes.append("Manter acompanhamento regular mensal")
-        recomendacoes.append("Reconhecer bom desempenho e comportamento exemplar")
-        recomendacoes.append("Continuar oferecendo oportunidades de desenvolvimento")
-    
-    return recomendacoes
-
-def get_risk_level(score: float) -> str:
-    """Retorna o nível de risco baseado no score"""
-    if score <= SCORING_CONFIG["risco_baixo"]:
-        return "Baixo"
-    elif score <= SCORING_CONFIG["risco_medio"]:
-        return "Médio"
-    else:
-        return "Alto"
-
-def get_risk_color(score: float) -> str:
-    """Retorna a cor baseada no score"""
-    if score <= SCORING_CONFIG["risco_baixo"]:
-        return COLORS["success"]
-    elif score <= SCORING_CONFIG["risco_medio"]:
-        return COLORS["secondary"]
-    else:
-        return COLORS["warning"]
-
-# ================================
-# FUNÇÕES DE PROCESSAMENTO
-# ================================
-
-def processar_planilha(df: pd.DataFrame) -> List[Employee]:
-    """Processa a planilha e retorna lista de funcionários"""
-    employees = []
-    
-    df.columns = df.columns.str.lower().str.strip().str.replace(' ', '_')
-    
-    required_columns = ['nome', 'departamento', 'cargo', 'tempo_casa', 'participou_pdi', 'num_treinamentos', 'num_ausencias']
-    
-    missing_columns = [col for col in required_columns if col not in df.columns]
-    if missing_columns:
-        st.error(f"Colunas obrigatórias ausentes: {', '.join(missing_columns)}")
-        return employees
-    
-    for _, row in df.iterrows():
-        try:
-            employee = Employee(
-                nome=str(row['nome']).strip(),
-                departamento=str(row['departamento']).strip(),
-                cargo=str(row['cargo']).strip(),
-                tempo_casa=float(row['tempo_casa']),
-                participou_pdi=str(row['participou_pdi']).lower() in ['sim', 'yes', 'true', '1'],
-                num_treinamentos=int(row['num_treinamentos']),
-                num_ausencias=int(row['num_ausencias'])
-            )
-            
-            employee.score_risco = calcular_score_risco(employee)
-            employee.fatores_risco = identificar_fatores_risco(employee)
-            employee.acoes_recomendadas = gerar_recomendacoes(employee.fatores_risco, employee)
-            
-            employees.append(employee)
-            
-        except Exception as e:
-            st.warning(f"Erro ao processar colaborador {row.get('nome', 'desconhecido')}: {str(e)}")
-    
-    return employees
-
-def processar_pdf_linkedin(pdf_file, employee_name: str) -> Dict:
-    """Processa PDF do LinkedIn e extrai informações relevantes"""
-    if not HAS_PDF_SUPPORT:
-        return {"erro": "PyMuPDF não disponível"}
-    
-    try:
-        # Resetar ponteiro do arquivo
-        pdf_file.seek(0)
-        
-        # Ler conteúdo do arquivo
-        pdf_content = pdf_file.read()
-        
-        # Verificar se o arquivo não está vazio
-        if len(pdf_content) == 0:
-            return {"erro": "Arquivo PDF vazio"}
-        
-        # Abrir PDF
-        pdf_document = fitz.open(stream=pdf_content, filetype="pdf")
-        
-        if pdf_document.page_count == 0:
-            pdf_document.close()
-            return {"erro": "PDF sem páginas"}
-        
-        text = ""
-        
-        # Extrair texto de todas as páginas
-        for page_num in range(pdf_document.page_count):
-            try:
-                page = pdf_document[page_num]
-                page_text = page.get_text()
-                text += page_text + "\n"
-            except Exception as e:
-                continue  # Pular páginas com erro
-        
-        pdf_document.close()
-        
-        # Verificar se conseguiu extrair texto
-        if not text or len(text.strip()) < 10:
-            return {
-                "erro": "Não foi possível extrair texto do PDF",
-                "texto_extraido": False,
-                "debug_info": f"Texto extraído: {len(text)} caracteres"
-            }
-        
-        # Análise do conteúdo extraído
-        linkedin_data = {
-            "ativo_recentemente": False,
-            "mudancas_frequentes": False,
-            "certificacoes_recentes": False,
-            "texto_extraido": True,
-            "chars_extraidos": len(text),
-            "debug_info": f"Processado com sucesso: {len(text)} caracteres"
-        }
-        
-        text_lower = text.lower()
-        current_year = datetime.now().year
-        
-        # Verificar atividade recente (buscar por anos recentes)
-        anos_recentes = [str(current_year), str(current_year - 1), str(current_year - 2)]
-        for ano in anos_recentes:
-            if ano in text:
-                linkedin_data["ativo_recentemente"] = True
-                break
-        
-        # Verificar mudanças frequentes (indicadores de trabalho/empresa)
-        work_indicators = [
-            "empresa", "company", "trabalho", "work", "emprego", "job",
-            "cargo", "position", "função", "role", "experiência", "experience",
-            "atuou", "worked", "atua", "works"
-        ]
-        
-        work_count = 0
-        for indicator in work_indicators:
-            work_count += text_lower.count(indicator)
-        
-        # Se tem muitos indicadores de trabalho, pode indicar mudanças frequentes
-        if work_count > 8:
-            linkedin_data["mudancas_frequentes"] = True
-        
-        # Verificar certificações e cursos
-        cert_keywords = [
-            "certificado", "certificate", "certificação", "certification",
-            "curso", "course", "treinamento", "training", "capacitação",
-            "diploma", "formação", "education", "qualificação", "skill",
-            "certified", "licensed", "especialização"
-        ]
-        
-        cert_count = 0
-        for keyword in cert_keywords:
-            cert_count += text_lower.count(keyword)
-        
-        if cert_count > 2:
-            linkedin_data["certificacoes_recentes"] = True
-        
-        # Adicionar informações de debug
-        linkedin_data["debug_indicators"] = {
-            "work_count": work_count,
-            "cert_count": cert_count,
-            "anos_encontrados": [ano for ano in anos_recentes if ano in text]
-        }
-        
-        return linkedin_data
-        
-    except Exception as e:
-        return {
-            "erro": f"Erro ao processar PDF: {str(e)}",
-            "texto_extraido": False,
-            "debug_info": f"Exceção: {type(e).__name__}"
-        }
-
-# ================================
-# FUNÇÕES DE EXPORTAÇÃO
-# ================================
-
-def export_to_excel(employees: List[Employee]) -> bytes:
-    """Exporta dados para Excel"""
-    data = []
-    for emp in employees:
-        data.append({
-            'Nome': emp.nome,
-            'Departamento': emp.departamento,
-            'Cargo': emp.cargo,
-            'Tempo de Casa (anos)': emp.tempo_casa,
-            'Score de Risco': round(emp.score_risco, 1),
-            'Nível de Risco': get_risk_level(emp.score_risco),
-            'Fatores de Risco': '; '.join(emp.fatores_risco) if emp.fatores_risco else 'Nenhum',
-            'Ações Recomendadas': '; '.join(emp.acoes_recomendadas) if emp.acoes_recomendadas else 'Nenhuma'
-        })
-    
-    df = pd.DataFrame(data)
-    
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, sheet_name='Análise de Risco', index=False)
-    
-    return output.getvalue()
-
-def export_to_json(employees: List[Employee]) -> str:
-    """Exporta dados para JSON"""
-    data = []
-    for emp in employees:
-        data.append({
-            'nome': emp.nome,
-            'departamento': emp.departamento,
-            'cargo': emp.cargo,
-            'tempo_casa': emp.tempo_casa,
-            'score_risco': round(emp.score_risco, 1),
-            'nivel_risco': get_risk_level(emp.score_risco),
-            'fatores_risco': emp.fatores_risco or [],
-            'acoes_recomendadas': emp.acoes_recomendadas or []
-        })
-    
-    return json.dumps(data, indent=2, ensure_ascii=False)
-
-# ================================
-# FUNÇÕES DE VISUALIZAÇÃO
-# ================================
-
-def create_risk_distribution_chart(employees: List[Employee]):
-    """Cria gráfico de distribuição de risco"""
+def create_risk_chart(employees: List[Employee]):
+    """Gráfico de distribuição de risco"""
     risk_counts = {"Baixo": 0, "Médio": 0, "Alto": 0}
     
     for emp in employees:
@@ -608,656 +380,306 @@ def create_risk_distribution_chart(employees: List[Employee]):
         marker_colors=[COLORS["success"], COLORS["secondary"], COLORS["warning"]]
     )])
     
-    fig.update_layout(title="Distribuição de Risco", title_x=0.5, height=400)
-    return fig
-
-def create_department_chart(employees: List[Employee]):
-    """Cria gráfico por departamento"""
-    dept_data = {}
-    
-    for emp in employees:
-        if emp.departamento not in dept_data:
-            dept_data[emp.departamento] = []
-        dept_data[emp.departamento].append(emp.score_risco)
-    
-    departments = list(dept_data.keys())
-    avg_scores = [sum(scores)/len(scores) for scores in dept_data.values()]
-    colors = [get_risk_color(score) for score in avg_scores]
-    
-    fig = go.Figure(data=[go.Bar(
-        x=avg_scores,
-        y=departments,
-        orientation='h',
-        marker_color=colors
-    )])
-    
     fig.update_layout(
-        title="Score Médio por Departamento",
+        title="Distribuição de Risco - Análise Simplificada",
         title_x=0.5,
-        xaxis_title="Score de Risco",
         height=400
     )
     
     return fig
 
+def create_score_histogram(employees: List[Employee]):
+    """Histograma de scores"""
+    scores = [emp.score_risco for emp in employees]
+    
+    fig = go.Figure(data=[go.Histogram(
+        x=scores,
+        nbinsx=20,
+        marker_color=COLORS["primary"],
+        opacity=0.7
+    )])
+    
+    # Adicionar linhas de threshold
+    fig.add_vline(x=20, line_dash="dash", line_color=COLORS["success"], 
+                  annotation_text="Baixo/Médio")
+    fig.add_vline(x=45, line_dash="dash", line_color=COLORS["warning"], 
+                  annotation_text="Médio/Alto")
+    
+    fig.update_layout(
+        title="Distribuição dos Scores de Risco",
+        xaxis_title="Score de Risco",
+        yaxis_title="Número de Colaboradores",
+        height=400
+    )
+    
+    return fig
+
+def export_to_excel(employees: List[Employee]) -> bytes:
+    """Exporta para Excel"""
+    data = []
+    for emp in employees:
+        data.append({
+            'Nome': emp.nome,
+            'Departamento': emp.departamento,
+            'Cargo': emp.cargo,
+            'Tempo_Casa_Anos': emp.tempo_casa,
+            'Participou_PDI': 'Sim' if emp.participou_pdi else 'Não',
+            'Num_Treinamentos': emp.num_treinamentos,
+            'Num_Ausencias': emp.num_ausencias,
+            'Score_Risco': round(emp.score_risco, 1),
+            'Nivel_Risco': get_risk_level(emp.score_risco),
+            'Fatores_Risco': '; '.join(emp.fatores_risco) if emp.fatores_risco else '',
+            'Acoes_Recomendadas': '; '.join(emp.acoes_recomendadas) if emp.acoes_recomendadas else ''
+        })
+    
+    df = pd.DataFrame(data)
+    
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, sheet_name='Analise_Risco', index=False)
+        
+        # Planilha de resumo
+        resumo = {
+            'Métrica': ['Total Colaboradores', 'Alto Risco', 'Médio Risco', 'Baixo Risco', 'Score Médio'],
+            'Valor': [
+                len(employees),
+                len([e for e in employees if e.score_risco > 45]),
+                len([e for e in employees if 20 < e.score_risco <= 45]),
+                len([e for e in employees if e.score_risco <= 20]),
+                round(sum(e.score_risco for e in employees) / len(employees), 1)
+            ]
+        }
+        pd.DataFrame(resumo).to_excel(writer, sheet_name='Resumo', index=False)
+    
+    return output.getvalue()
+
 # ================================
-# INICIALIZAÇÃO DA SESSÃO
+# INTERFACE PRINCIPAL
 # ================================
 
 def init_session_state():
-    """Inicializa variáveis da sessão"""
     if 'employees' not in st.session_state:
         st.session_state.employees = []
-    if 'data_loaded' not in st.session_state:
-        st.session_state.data_loaded = False
 
-# ================================
-# PÁGINAS DA APLICAÇÃO
-# ================================
+def main():
+    apply_custom_css()
+    init_session_state()
+    
+    # Header
+    st.markdown("""
+    <div class="custom-header">
+        <h1>🎯 Radar RH - Versão Simplificada</h1>
+        <p>Análise de Risco baseada apenas em dados Excel</p>
+        <p><small>📊 Foco: Tempo Casa | PDI | Treinamentos | Ausências</small></p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Sidebar
+    with st.sidebar:
+        st.title("📋 Menu")
+        
+        page = st.radio(
+            "Navegação:",
+            ["🏠 Início", "📤 Upload Excel", "📊 Dashboard", "📋 Exportar"]
+        )
+        
+        # Status
+        if st.session_state.employees:
+            st.markdown("### 📈 Estatísticas")
+            total = len(st.session_state.employees)
+            high_risk = len([e for e in st.session_state.employees if e.score_risco > 45])
+            st.metric("Total", total)
+            st.metric("Alto Risco", high_risk)
+            st.metric("% Alto Risco", f"{(high_risk/total)*100:.1f}%")
+    
+    # Páginas
+    if page == "🏠 Início":
+        render_home()
+    elif page == "📤 Upload Excel":
+        render_upload()
+    elif page == "📊 Dashboard":
+        render_dashboard()
+    elif page == "📋 Exportar":
+        render_export()
 
-def render_home_page():
-    """Página inicial"""
+def render_home():
     col1, col2 = st.columns([2, 1])
     
     with col1:
         st.markdown("""
-        ### 🎯 Bem-vindo ao Radar RH!
+        ### 🎯 Análise Simplificada de Risco
         
-        O **Radar RH** é sua ferramenta inteligente para identificar colaboradores em risco de saída 
-        e tomar ações preventivas baseadas em dados.
+        **Sistema focado em 4 indicadores principais:**
         
-        #### ✨ Principais funcionalidades:
+        #### 📊 Indicadores Analisados:
+        - **⏰ Tempo de Casa** (25%): Estabilidade na empresa
+        - **📋 PDI** (30%): Participação em desenvolvimento
+        - **🎓 Treinamentos** (25%): Investimento em capacitação  
+        - **📅 Ausências** (20%): Frequência e pontualidade
         
-        - **📊 Score Preditivo**: Análise de risco de 0 a 100 para cada colaborador
-        - **🔍 Diagnóstico Detalhado**: Identificação dos fatores específicos de risco  
-        - **💡 Recomendações IA**: Sugestões personalizadas de ação
-        - **📈 Dashboards Visuais**: Gráficos interativos e intuitivos
-        - **📋 Relatórios Completos**: Exportação em Excel e JSON
+        #### 🚀 Como Usar:
+        1. **Prepare** planilha Excel com as 7 colunas obrigatórias
+        2. **Faça upload** na aba "Upload Excel"
+        3. **Visualize** resultados no Dashboard
+        4. **Exporte** relatório final
         
-        #### 🚀 Como começar:
-        
-        1. **Prepare seus dados**: Use uma planilha Excel com as colunas necessárias
-        2. **Faça upload**: Carregue dados do RH + PDFs LinkedIn (opcional)
-        3. **Analise**: Visualize resultados no dashboard
-        4. **Aja**: Use as recomendações para reter talentos
+        #### 📈 Níveis de Risco:
+        - **Baixo**: 0-20 pontos (✅ Seguro)
+        - **Médio**: 21-45 pontos (⚠️ Atenção)
+        - **Alto**: 46+ pontos (🚨 Ação urgente)
         """)
     
     with col2:
-        st.markdown(create_metric_card("Colaboradores Analisados", str(len(st.session_state.employees))), unsafe_allow_html=True)
-        st.markdown(create_metric_card("Precisão do Modelo", "95%"), unsafe_allow_html=True)
-        st.markdown(create_metric_card("Redução de Turnover", "30%"), unsafe_allow_html=True)
-    
-    st.markdown("---")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("📋 Ver Instruções", use_container_width=True):
-            st.info("""
-            **Colunas necessárias na planilha Excel:**
-            - nome: Nome completo do colaborador
-            - departamento: Departamento ou área
-            - cargo: Cargo atual
-            - tempo_casa: Tempo em anos (ex: 1.5)
-            - participou_pdi: Sim/Não
-            - num_treinamentos: Número de treinamentos
-            - num_ausencias: Número de ausências
-            """)
-    
-    with col2:
-        if st.button("📤 Fazer Upload", use_container_width=True):
-            st.rerun()
-    
-    with col3:
-        if st.button("📊 Ver Dashboard", use_container_width=True):
-            if st.session_state.employees:
-                st.rerun()
-            else:
-                st.warning("Primeiro carregue seus dados!")
+        # Modelo de planilha
+        if st.button("📥 Baixar Modelo Excel", use_container_width=True):
+            modelo_data = {
+                'nome': [
+                    'João Silva', 'Maria Santos', 'Pedro Lima', 'Ana Costa',
+                    'Carlos Oliveira', 'Fernanda Souza', 'Rafael Mendes'
+                ],
+                'departamento': [
+                    'Vendas', 'Marketing', 'TI', 'RH', 'Financeiro', 'Operações', 'TI'
+                ],
+                'cargo': [
+                    'Vendedor', 'Analista', 'Desenvolvedor', 'Analista RH', 
+                    'Assistente', 'Coordenador', 'Estagiário'
+                ],
+                'tempo_casa': [0.3, 2.5, 1.2, 4.1, 0.8, 3.2, 0.1],
+                'participou_pdi': ['Não', 'Sim', 'Sim', 'Sim', 'Não', 'Sim', 'Não'],
+                'num_treinamentos': [0, 4, 2, 6, 1, 5, 0],
+                'num_ausencias': [8, 2, 1, 0, 12, 1, 25]
+            }
+            
+            df_modelo = pd.DataFrame(modelo_data)
+            output = io.BytesIO()
+            df_modelo.to_excel(output, index=False, engine='openpyxl')
+            
+            st.download_button(
+                "💾 Download Modelo",
+                data=output.getvalue(),
+                file_name="modelo_radar_rh.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
-def render_upload_page():
-    """Página de upload"""
-    st.markdown("### 📤 Upload de Dados")
+def render_upload():
+    st.markdown("### 📤 Upload da Planilha Excel")
+    
+    # Mostrar colunas obrigatórias
+    st.markdown("""
+    #### 📋 Colunas Obrigatórias:
+    1. **nome** - Nome completo do colaborador
+    2. **departamento** - Área/setor de trabalho
+    3. **cargo** - Função atual
+    4. **tempo_casa** - Anos na empresa (ex: 1.5)
+    5. **participou_pdi** - Sim/Não nos últimos 12 meses
+    6. **num_treinamentos** - Quantidade no último ano
+    7. **num_ausencias** - Faltas nos últimos 6 meses
+    """)
     
     uploaded_file = st.file_uploader(
-        "📊 Selecione sua planilha Excel",
-        type=['xlsx', 'xls', 'csv'],
-        help="A planilha deve conter as colunas: nome, departamento, cargo, tempo_casa, participou_pdi, num_treinamentos, num_ausencias"
+        "📊 Selecione seu arquivo Excel",
+        type=['xlsx', 'xls']
     )
     
-    if uploaded_file is not None:
+    if uploaded_file:
         try:
-            if uploaded_file.name.endswith('.csv'):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
+            df = pd.read_excel(uploaded_file)
+            st.success(f"✅ Arquivo carregado: {len(df)} registros")
             
-            st.success(f"✅ Arquivo carregado com sucesso! {len(df)} registros encontrados.")
+            st.markdown("#### 👀 Preview")
             st.dataframe(df.head(), use_container_width=True)
             
-            required_cols = ['nome', 'departamento', 'cargo', 'tempo_casa', 'participou_pdi', 'num_treinamentos', 'num_ausencias']
-            df_cols = [col.lower().strip().replace(' ', '_') for col in df.columns]
-            
-            missing_cols = [col for col in required_cols if col not in df_cols]
-            
-            if missing_cols:
-                st.error(f"❌ Colunas obrigatórias ausentes: {', '.join(missing_cols)}")
-            else:
-                st.success("✅ Todas as colunas obrigatórias estão presentes!")
-                
-                if st.button("🚀 Processar Dados", use_container_width=True):
-                    with st.spinner("Processando dados..."):
-                        employees = processar_planilha(df)
+            if st.button("🚀 Processar Análise", use_container_width=True):
+                with st.spinner("Analisando dados..."):
+                    employees = processar_planilha(df)
+                    
+                    if employees:
+                        st.session_state.employees = employees
+                        st.success(f"✅ {len(employees)} colaboradores analisados!")
                         
-                        if employees:
-                            st.session_state.employees = employees
-                            st.session_state.data_loaded = True
-                            st.success(f"✅ {len(employees)} colaboradores processados com sucesso!")
-                            st.balloons()
-                        else:
-                            st.error("❌ Erro ao processar os dados.")
+                        # Stats rápidas
+                        high_risk = len([e for e in employees if e.score_risco > 45])
+                        st.warning(f"🚨 {high_risk} colaboradores em ALTO RISCO")
+                        st.balloons()
+                    else:
+                        st.error("❌ Erro no processamento")
         
         except Exception as e:
-            st.error(f"❌ Erro ao ler o arquivo: {str(e)}")
-    
-    # Upload opcional de PDFs do LinkedIn
-    st.markdown("---")
-    st.markdown("#### 📄 PDFs do LinkedIn (Opcional)")
-    
-    if HAS_PDF_SUPPORT:
-        linkedin_files = st.file_uploader(
-            "Selecione PDFs do LinkedIn",
-            type=['pdf'],
-            accept_multiple_files=True,
-            help="Nomeie o arquivo com o nome do colaborador"
-        )
-        
-        if linkedin_files and st.session_state.employees:
-            st.markdown("#### 🔄 Processamento e Associação dos PDFs:")
-            
-            # Criar um dicionário para mapear PDFs para colaboradores
-            pdf_employee_mapping = {}
-            unmatched_pdfs = []
-            
-            # Primeiro, tentar associação automática
-            for pdf_file in linkedin_files:
-                file_name_clean = pdf_file.name.lower().replace('.pdf', '').replace('_', ' ').replace('-', ' ')
-                
-                matched = False
-                for employee in st.session_state.employees:
-                    nome_parts = employee.nome.lower().split()
-                    # Verificar se pelo menos 2 partes do nome estão no arquivo
-                    matches = sum(1 for part in nome_parts if len(part) > 2 and part in file_name_clean)
-                    
-                    if matches >= 2 or (matches >= 1 and len(nome_parts) <= 2):
-                        pdf_employee_mapping[pdf_file.name] = employee
-                        matched = True
-                        break
-                
-                if not matched:
-                    unmatched_pdfs.append(pdf_file)
-            
-            # Mostrar associações automáticas
-            if pdf_employee_mapping:
-                st.success(f"✅ {len(pdf_employee_mapping)} PDFs associados automaticamente:")
-                for pdf_name, employee in pdf_employee_mapping.items():
-                    col1, col2, col3 = st.columns([2, 2, 1])
-                    with col1:
-                        st.write(f"📄 {pdf_name}")
-                    with col2:
-                        st.write(f"👤 {employee.nome}")
-                    with col3:
-                        if st.button("❌", key=f"remove_{pdf_name}", help="Remover associação"):
-                            # Mover de volta para não associados
-                            for pdf_file in linkedin_files:
-                                if pdf_file.name == pdf_name:
-                                    unmatched_pdfs.append(pdf_file)
-                                    del pdf_employee_mapping[pdf_name]
-                                    st.rerun()
-            
-            # Permitir associação manual para PDFs não associados
-            if unmatched_pdfs:
-                st.warning(f"⚠️ {len(unmatched_pdfs)} PDFs precisam de associação manual:")
-                
-                for pdf_file in unmatched_pdfs:
-                    col1, col2, col3 = st.columns([2, 3, 1])
-                    
-                    with col1:
-                        st.write(f"📄 {pdf_file.name}")
-                    
-                    with col2:
-                        # Lista de colaboradores disponíveis
-                        employee_options = ["Selecione um colaborador..."] + [emp.nome for emp in st.session_state.employees]
-                        selected_employee = st.selectbox(
-                            "Associar com:",
-                            employee_options,
-                            key=f"select_{pdf_file.name}"
-                        )
-                    
-                    with col3:
-                        if st.button("✅", key=f"add_{pdf_file.name}", disabled=(selected_employee == "Selecione um colaborador...")):
-                            # Encontrar o colaborador selecionado
-                            for employee in st.session_state.employees:
-                                if employee.nome == selected_employee:
-                                    pdf_employee_mapping[pdf_file.name] = employee
-                                    unmatched_pdfs.remove(pdf_file)
-                                    st.rerun()
-            
-            # Botão para processar todos os PDFs associados
-            if pdf_employee_mapping:
-                st.markdown("---")
-                if st.button("🚀 Processar Todos os PDFs Associados", use_container_width=True):
-                    with st.spinner("Processando PDFs do LinkedIn..."):
-                        processed_count = 0
-                        error_count = 0
-                        
-                        st.markdown("#### 📋 Resultado do Processamento:")
-                        
-                        for pdf_name, employee in pdf_employee_mapping.items():
-                            # Encontrar o arquivo PDF correspondente
-                            pdf_file = None
-                            for file in linkedin_files:
-                                if file.name == pdf_name:
-                                    pdf_file = file
-                                    break
-                            
-                            if pdf_file:
-                                st.write(f"📄 Processando: **{pdf_name}** → **{employee.nome}**")
-                                
-                                linkedin_data = processar_pdf_linkedin(pdf_file, employee.nome)
-                                
-                                # Verificar se houve erro
-                                if linkedin_data.get("erro"):
-                                    error_count += 1
-                                    st.error(f"❌ Erro: {linkedin_data['erro']}")
-                                    if linkedin_data.get("debug_info"):
-                                        st.write(f"   Debug: {linkedin_data['debug_info']}")
-                                    continue
-                                
-                                # Verificar se extraiu texto
-                                if not linkedin_data.get("texto_extraido", False):
-                                    error_count += 1
-                                    st.error("❌ Não foi possível extrair texto do PDF")
-                                    continue
-                                
-                                # Processamento bem-sucedido
-                                old_score = employee.score_risco
-                                employee.linkedin_data = linkedin_data
-                                employee.score_risco = calcular_score_risco(employee)
-                                employee.fatores_risco = identificar_fatores_risco(employee)
-                                employee.acoes_recomendadas = gerar_recomendacoes(employee.fatores_risco, employee)
-                                
-                                processed_count += 1
-                                
-                                # Mostrar resultado detalhado
-                                col1, col2 = st.columns([3, 1])
-                                with col1:
-                                    st.success(f"✅ Processado com sucesso!")
-                                    
-                                    # Mostrar informações extraídas
-                                    st.write(f"   • Texto extraído: {linkedin_data.get('chars_extraidos', 0)} caracteres")
-                                    
-                                    # Mostrar insights detectados
-                                    insights = []
-                                    if linkedin_data.get("ativo_recentemente"):
-                                        insights.append("🔄 Atividade recente detectada")
-                                    if linkedin_data.get("mudancas_frequentes"):
-                                        insights.append("🏢 Múltiplas experiências profissionais")
-                                    if linkedin_data.get("certificacoes_recentes"):
-                                        insights.append("🎓 Certificações/cursos encontrados")
-                                    
-                                    if insights:
-                                        st.write("   **Sinais detectados:**")
-                                        for insight in insights:
-                                            st.write(f"     • {insight}")
-                                    else:
-                                        st.write("   • Nenhum sinal de risco detectado")
-                                    
-                                    # Mostrar debug info se disponível
-                                    if linkedin_data.get("debug_indicators"):
-                                        debug = linkedin_data["debug_indicators"]
-                                        with st.expander("🔍 Detalhes da análise"):
-                                            st.write(f"Indicadores de trabalho: {debug.get('work_count', 0)}")
-                                            st.write(f"Indicadores de certificação: {debug.get('cert_count', 0)}")
-                                            st.write(f"Anos encontrados: {debug.get('anos_encontrados', [])}")
-                                
-                                with col2:
-                                    # Mostrar mudança no score
-                                    if old_score != employee.score_risco:
-                                        delta = employee.score_risco - old_score
-                                        if delta > 0:
-                                            st.error(f"⬆️ +{delta:.1f}")
-                                            st.write(f"{old_score:.1f} → {employee.score_risco:.1f}")
-                                        else:
-                                            st.success(f"⬇️ {delta:.1f}")
-                                            st.write(f"{old_score:.1f} → {employee.score_risco:.1f}")
-                                    else:
-                                        st.info("➡️ Score mantido")
-                                        st.write(f"Score: {employee.score_risco:.1f}")
-                                
-                                st.markdown("---")
-                        
-                        # Resumo final do processamento
-                        st.markdown("### 📊 Resumo do Processamento")
-                        
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("PDFs Processados", processed_count)
-                        with col2:
-                            st.metric("Erros", error_count)
-                        with col3:
-                            total_linkedin = len([e for e in st.session_state.employees if e.linkedin_data])
-                            st.metric("Total com LinkedIn", total_linkedin)
-                        
-                        if processed_count > 0:
-                            st.balloons()
-                            st.success(f"""
-                            🎉 **Processamento Concluído!**
-                            
-                            ✅ {processed_count} PDFs processados com sucesso  
-                            ❌ {error_count} erros encontrados  
-                            📊 {total_linkedin} colaboradores agora têm dados do LinkedIn  
-                            
-                            **Próximo passo:** Vá para o Dashboard para ver os resultados atualizados!
-                            """)
-                        else:
-                            st.error("""
-                            ❌ **Nenhum PDF foi processado com sucesso**
-                            
-                            **Possíveis causas:**
-                            - PDFs podem estar corrompidos ou protegidos por senha
-                            - PDFs podem ser apenas imagens (sem texto extraível)
-                            - Arquivos podem não ser PDFs válidos
-                            
-                            **Soluções:**
-                            - Verifique se os PDFs abrem normalmente
-                            - Exporte novamente do LinkedIn
-                            - Certifique-se de que não são apenas imagens
-                            """)
-                            
-                        # Mostrar dicas de troubleshooting se houve erros
-                        if error_count > 0:
-                            with st.expander("🛠️ Dicas para resolver problemas"):
-                                st.markdown("""
-                                ### Problemas comuns e soluções:
-                                
-                                **1. "Não foi possível extrair texto"**
-                                - O PDF pode ser uma imagem escaneada
-                                - Solução: Exporte novamente do LinkedIn
-                                
-                                **2. "PDF vazio" ou "PDF sem páginas"**
-                                - Arquivo corrompido no upload
-                                - Solução: Faça upload novamente
-                                
-                                **3. "Erro ao processar PDF"**
-                                - PDF pode estar protegido por senha
-                                - Solução: Remova a proteção ou exporte novamente
-                                
-                                ### ✅ Como garantir PDFs funcionais:
-                                1. No LinkedIn, vá em seu perfil
-                                2. Clique em "Mais" → "Salvar como PDF"
-                                3. Aguarde o download completar
-                                4. Teste abrindo o PDF antes do upload
-                                """)
-            else:
-                st.info("💡 Associe pelo menos um PDF a um colaborador para poder processar.")
-            
-            # Instruções para melhor nomeação
-            with st.expander("💡 Dicas para melhor associação automática"):
-                st.markdown("""
-                ### 📋 Como nomear os PDFs para associação automática:
-                
-                **✅ Bons exemplos:**
-                - `João Silva.pdf`
-                - `Maria_Oliveira_Costa.pdf`
-                - `Pedro-Henrique-Lima.pdf`
-                
-                **❌ Evite:**
-                - `LinkedIn_Profile.pdf`
-                - `CV_2024.pdf`
-                - `Perfil.pdf`
-                
-                ### 🎯 Regras de associação:
-                - O sistema busca pelo **nome** e **sobrenome** do colaborador no nome do arquivo
-                - Precisa de pelo menos **2 partes do nome** para associação automática
-                - Ignora acentos, espaços e caracteres especiais
-                - Não diferencia maiúsculas/minúsculas
-                """)
-        
-        else:
-            if not st.session_state.employees:
-                st.info("💡 Primeiro faça upload da planilha Excel para poder associar os PDFs do LinkedIn.")
-            
-    else:
-        st.info("💡 Funcionalidade de PDF não disponível. Instale PyMuPDF para usar esta funcionalidade.")
+            st.error(f"❌ Erro: {str(e)}")
 
-def render_dashboard_page():
-    """Página do dashboard"""
+def render_dashboard():
     if not st.session_state.employees:
-        st.warning("⚠️ Nenhum dado carregado. Faça upload dos dados primeiro.")
+        st.warning("⚠️ Carregue dados primeiro")
         return
     
-    st.markdown("### 📊 Dashboard - Visão Geral")
+    st.markdown("### 📊 Dashboard de Risco")
     
     employees = st.session_state.employees
     
+    # Métricas
     col1, col2, col3, col4 = st.columns(4)
     
-    total_employees = len(employees)
-    high_risk = len([e for e in employees if e.score_risco > 60])
-    medium_risk = len([e for e in employees if 30 < e.score_risco <= 60])
-    avg_score = sum(e.score_risco for e in employees) / len(employees)
+    total = len(employees)
+    high_risk = len([e for e in employees if e.score_risco > 45])
+    medium_risk = len([e for e in employees if 20 < e.score_risco <= 45])
+    low_risk = len([e for e in employees if e.score_risco <= 20])
     
     with col1:
-        st.markdown(create_metric_card("Total", str(total_employees)), unsafe_allow_html=True)
-    
+        st.markdown(create_metric_card("Total", str(total)), unsafe_allow_html=True)
     with col2:
-        st.markdown(create_metric_card("Alto Risco", str(high_risk), "high"), unsafe_allow_html=True)
-    
+        st.markdown(create_metric_card("Alto Risco", f"{high_risk} ({(high_risk/total)*100:.1f}%)", "high"), unsafe_allow_html=True)
     with col3:
-        st.markdown(create_metric_card("Risco Médio", str(medium_risk), "medium"), unsafe_allow_html=True)
-    
+        st.markdown(create_metric_card("Médio Risco", f"{medium_risk} ({(medium_risk/total)*100:.1f}%)", "medium"), unsafe_allow_html=True)
     with col4:
-        st.markdown(create_metric_card("Score Médio", f"{avg_score:.1f}", get_risk_level(avg_score).lower()), unsafe_allow_html=True)
+        st.markdown(create_metric_card("Baixo Risco", f"{low_risk} ({(low_risk/total)*100:.1f}%)", "low"), unsafe_allow_html=True)
     
+    # Gráficos
     col1, col2 = st.columns(2)
     
     with col1:
-        fig_dist = create_risk_distribution_chart(employees)
-        st.plotly_chart(fig_dist, use_container_width=True)
+        fig1 = create_risk_chart(employees)
+        st.plotly_chart(fig1, use_container_width=True)
     
     with col2:
-        fig_dept = create_department_chart(employees)
-        st.plotly_chart(fig_dept, use_container_width=True)
+        fig2 = create_score_histogram(employees)
+        st.plotly_chart(fig2, use_container_width=True)
     
+    # Lista de alto risco
     st.markdown("### 🚨 Colaboradores em Alto Risco")
-    
-    high_risk_employees = [e for e in employees if e.score_risco > 60]
+    high_risk_employees = [e for e in employees if e.score_risco > 45]
     
     if high_risk_employees:
-        high_risk_data = []
+        data = []
         for emp in high_risk_employees:
-            high_risk_data.append({
+            data.append({
                 'Nome': emp.nome,
-                'Departamento': emp.departamento,
+                'Depto': emp.departamento,
                 'Score': f"{emp.score_risco:.1f}",
-                'Principal Fator': emp.fatores_risco[0] if emp.fatores_risco else 'N/A'
+                'Principal Problema': emp.fatores_risco[0] if emp.fatores_risco else 'N/A',
+                'Ação Urgente': emp.acoes_recomendadas[0] if emp.acoes_recomendadas else 'N/A'
             })
         
-        df_high_risk = pd.DataFrame(high_risk_data)
-        st.dataframe(df_high_risk, use_container_width=True, hide_index=True)
+        df_risk = pd.DataFrame(data)
+        st.dataframe(df_risk, use_container_width=True, hide_index=True)
     else:
         st.success("✅ Nenhum colaborador em alto risco!")
 
-def render_analysis_page():
-    """Página de análise detalhada"""
+def render_export():
     if not st.session_state.employees:
-        st.warning("⚠️ Nenhum dado carregado. Faça upload dos dados primeiro.")
-        return
-    
-    st.markdown("### 🔍 Análise Detalhada")
-    
-    employees = st.session_state.employees
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        dept_filter = st.selectbox(
-            "Filtrar por Departamento:",
-            ["Todos"] + list(set(e.departamento for e in employees))
-        )
-    
-    with col2:
-        risk_filter = st.selectbox(
-            "Filtrar por Nível de Risco:",
-            ["Todos", "Alto", "Médio", "Baixo"]
-        )
-    
-    with col3:
-        sort_by = st.selectbox(
-            "Ordenar por:",
-            ["Score de Risco (Desc)", "Nome", "Departamento"]
-        )
-    
-    filtered_employees = employees.copy()
-    
-    if dept_filter != "Todos":
-        filtered_employees = [e for e in filtered_employees if e.departamento == dept_filter]
-    
-    if risk_filter != "Todos":
-        if risk_filter == "Alto":
-            filtered_employees = [e for e in filtered_employees if e.score_risco > 60]
-        elif risk_filter == "Médio":
-            filtered_employees = [e for e in filtered_employees if 30 < e.score_risco <= 60]
-        elif risk_filter == "Baixo":
-            filtered_employees = [e for e in filtered_employees if e.score_risco <= 30]
-    
-    if sort_by == "Score de Risco (Desc)":
-        filtered_employees.sort(key=lambda x: x.score_risco, reverse=True)
-    elif sort_by == "Nome":
-        filtered_employees.sort(key=lambda x: x.nome)
-    elif sort_by == "Departamento":
-        filtered_employees.sort(key=lambda x: x.departamento)
-    
-    st.markdown(f"**{len(filtered_employees)} colaboradores encontrados**")
-    
-    for i, emp in enumerate(filtered_employees):
-        with st.expander(f"{emp.nome} - {emp.departamento} (Score: {emp.score_risco:.1f})"):
-            
-            col1, col2 = st.columns([1, 2])
-            
-            with col1:
-                st.markdown("#### 📊 Informações Básicas")
-                st.write(f"**Cargo:** {emp.cargo}")
-                st.write(f"**Tempo de Casa:** {emp.tempo_casa} anos")
-                st.write(f"**PDI:** {'Sim' if emp.participou_pdi else 'Não'}")
-                st.write(f"**Treinamentos:** {emp.num_treinamentos}")
-                st.write(f"**Ausências:** {emp.num_ausencias}")
-                
-                fig_gauge = go.Figure(go.Indicator(
-                    mode="gauge+number",
-                    value=emp.score_risco,
-                    domain={'x': [0, 1], 'y': [0, 1]},
-                    title={'text': "Score de Risco"},
-                    gauge={
-                        'axis': {'range': [None, 100]},
-                        'bar': {'color': get_risk_color(emp.score_risco)},
-                        'steps': [
-                            {'range': [0, 30], 'color': "lightgray"},
-                            {'range': [30, 60], 'color': "gray"},
-                            {'range': [60, 100], 'color': "lightcoral"}
-                        ]
-                    }
-                ))
-                fig_gauge.update_layout(height=200, margin=dict(l=20, r=20, t=40, b=20))
-                st.plotly_chart(fig_gauge, use_container_width=True, key=f"gauge_{i}_{emp.nome.replace(' ', '_')}")
-            
-            with col2:
-                st.markdown("#### 🚨 Fatores de Risco")
-                if emp.fatores_risco:
-                    for fator in emp.fatores_risco:
-                        st.markdown(f"• {fator}")
-                else:
-                    st.success("✅ Nenhum fator de risco identificado")
-                
-                st.markdown("#### 💡 Recomendações de Ação")
-                if emp.acoes_recomendadas:
-                    for j, acao in enumerate(emp.acoes_recomendadas, 1):
-                        st.markdown(f"{j}. {acao}")
-                
-                if has_openai() and HAS_OPENAI:
-                    if st.button(f"🤖 Gerar Insights IA", key=f"ai_insights_{i}_{emp.nome.replace(' ', '_')}"):
-                        try:
-                            client = openai.OpenAI(api_key=get_openai_key())
-                            
-                            prompt = f"""
-                            Analise este colaborador e forneça insights personalizados:
-                            
-                            Nome: {emp.nome}
-                            Departamento: {emp.departamento}
-                            Cargo: {emp.cargo}
-                            Tempo de casa: {emp.tempo_casa} anos
-                            Score de risco: {emp.score_risco}/100
-                            Fatores de risco: {', '.join(emp.fatores_risco) if emp.fatores_risco else 'Nenhum'}
-                            
-                            Forneça uma análise concisa (máximo 100 palavras) sobre:
-                            1. Principal preocupação
-                            2. Urgência da situação
-                            3. Abordagem recomendada
-                            """
-                            
-                            response = client.chat.completions.create(
-                                model="gpt-3.5-turbo",
-                                messages=[
-                                    {"role": "system", "content": "Você é um especialista em RH e retenção de talentos."},
-                                    {"role": "user", "content": prompt}
-                                ],
-                                max_tokens=200,
-                                temperature=0.7
-                            )
-                            
-                            st.markdown("#### 🤖 Insights da IA")
-                            st.markdown(f'<div class="alert-info">{response.choices[0].message.content}</div>', unsafe_allow_html=True)
-                            
-                        except Exception as e:
-                            st.error(f"Erro ao gerar insights: {str(e)}")
-                            try:
-                                openai.api_key = get_openai_key()
-                                response = openai.ChatCompletion.create(
-                                    model="gpt-3.5-turbo",
-                                    messages=[
-                                        {"role": "system", "content": "Você é um especialista em RH e retenção de talentos."},
-                                        {"role": "user", "content": prompt}
-                                    ],
-                                    max_tokens=200,
-                                    temperature=0.7
-                                )
-                                st.markdown("#### 🤖 Insights da IA")
-                                st.markdown(f'<div class="alert-info">{response.choices[0].message.content}</div>', unsafe_allow_html=True)
-                            except Exception as e2:
-                                st.error(f"Erro na API OpenAI: {str(e2)}")
-                                st.info("💡 Verifique se sua chave OpenAI está correta nos Secrets")
-                elif not HAS_OPENAI:
-                    st.info("💡 Instale a biblioteca OpenAI para usar insights de IA")
-                elif not has_openai():
-                    st.info("💡 Configure sua chave OpenAI nos Secrets para usar insights de IA")
-
-def render_export_page():
-    """Página de exportação"""
-    if not st.session_state.employees:
-        st.warning("⚠️ Nenhum dado carregado. Faça upload dos dados primeiro.")
+        st.warning("⚠️ Carregue dados primeiro")
         return
     
     st.markdown("### 📋 Exportar Relatórios")
     
     employees = st.session_state.employees
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("#### 📊 Excel")
-        st.markdown("Relatório completo em formato tabular")
+        st.markdown("#### 📊 Relatório Excel Completo")
+        st.markdown("Inclui análise detalhada + resumo executivo")
         
-        if st.button("📥 Baixar Excel", use_container_width=True):
+        if st.button("📥 Gerar Excel", use_container_width=True):
             excel_data = export_to_excel(employees)
             
             st.download_button(
@@ -1268,146 +690,87 @@ def render_export_page():
             )
     
     with col2:
-        st.markdown("#### 📄 JSON")
-        st.markdown("Dados estruturados para integração")
+        st.markdown("#### 📄 Resumo Executivo")
         
-        if st.button("📥 Baixar JSON", use_container_width=True):
-            json_data = export_to_json(employees)
-            
-            st.download_button(
-                label="💾 Download JSON",
-                data=json_data,
-                file_name=f"dados_radar_rh_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
-                mime="application/json"
-            )
-    
-    with col3:
-        st.markdown("#### 📋 CSV")
-        st.markdown("Formato simples para planilhas")
+        total = len(employees)
+        high_risk = len([e for e in employees if e.score_risco > 45])
+        medium_risk = len([e for e in employees if 20 < e.score_risco <= 45])
+        low_risk = len([e for e in employees if e.score_risco <= 20])
+        avg_score = sum(e.score_risco for e in employees) / len(employees)
         
-        if st.button("📥 Baixar CSV", use_container_width=True):
-            data = []
-            for emp in employees:
-                data.append({
-                    'Nome': emp.nome,
-                    'Departamento': emp.departamento,
-                    'Cargo': emp.cargo,
-                    'Tempo_Casa': emp.tempo_casa,
-                    'Score_Risco': round(emp.score_risco, 1),
-                    'Nivel_Risco': get_risk_level(emp.score_risco),
-                    'Fatores_Risco': '; '.join(emp.fatores_risco) if emp.fatores_risco else '',
-                    'Acoes_Recomendadas': '; '.join(emp.acoes_recomendadas) if emp.acoes_recomendadas else ''
-                })
-            
-            df = pd.DataFrame(data)
-            csv_data = df.to_csv(index=False)
-            
-            st.download_button(
-                label="💾 Download CSV",
-                data=csv_data,
-                file_name=f"relatorio_radar_rh_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                mime="text/csv"
-            )
-    
-    st.markdown("---")
-    st.markdown("#### 👀 Preview dos Dados")
-    
-    preview_data = []
-    for emp in employees[:10]:
-        preview_data.append({
-            'Nome': emp.nome,
-            'Departamento': emp.departamento,
-            'Score': f"{emp.score_risco:.1f}",
-            'Nível': get_risk_level(emp.score_risco),
-            'Principais Fatores': ', '.join(emp.fatores_risco[:2]) if emp.fatores_risco else 'Nenhum'
-        })
-    
-    df_preview = pd.DataFrame(preview_data)
-    st.dataframe(df_preview, use_container_width=True, hide_index=True)
-    
-    if len(employees) > 10:
-        st.info(f"Mostrando apenas os primeiros 10 de {len(employees)} colaboradores. Use os botões de download para obter o relatório completo.")
-    
-    st.markdown("---")
-    st.markdown("#### 📈 Resumo Executivo")
-    
-    total = len(employees)
-    high_risk = len([e for e in employees if e.score_risco > 60])
-    medium_risk = len([e for e in employees if 30 < e.score_risco <= 60])
-    low_risk = len([e for e in employees if e.score_risco <= 30])
-    
-    st.markdown(f"""
-    **Análise realizada em:** {datetime.now().strftime('%d/%m/%Y às %H:%M')}
-    
-    **Resumo Geral:**
-    - Total de colaboradores analisados: **{total}**
-    - Alto risco: **{high_risk}** ({(high_risk/total)*100:.1f}%)
-    - Risco médio: **{medium_risk}** ({(medium_risk/total)*100:.1f}%)
-    - Baixo risco: **{low_risk}** ({(low_risk/total)*100:.1f}%)
-    
-    **Principais Recomendações:**
-    - Priorizar ações para os {high_risk} colaboradores em alto risco
-    - Implementar programa de mentoria para colaboradores com pouco tempo de casa
-    - Intensificar programas de PDI e treinamentos
-    - Monitorar regularmente os indicadores de engajamento
-    """)
+        st.markdown(f"""
+        **📊 Análise de {datetime.now().strftime('%d/%m/%Y')}**
+        
+        **Total:** {total} colaboradores
+        - 🚨 Alto risco: {high_risk} ({(high_risk/total)*100:.1f}%)
+        - ⚠️ Médio risco: {medium_risk} ({(medium_risk/total)*100:.1f}%)
+        - ✅ Baixo risco: {low_risk} ({(low_risk/total)*100:.1f}%)
+        
+        **Score médio:** {avg_score:.1f} pontos
+        
+        **🎯 Recomendações:**
+        - Focar nos {high_risk} casos de alto risco
+        - Implementar PDI para veteranos sem desenvolvimento
+        - Ampliar programa de treinamentos
+        - Investigar causas de ausências excessivas
+        """)
 
-# ================================
-# INTERFACE PRINCIPAL
-# ================================
-
-def main():
-    """Função principal da aplicação"""
-    apply_custom_css()
-    init_session_state()
+# Teste do algoritmo simplificado
+def teste_algoritmo():
+    st.markdown("### 🧪 Teste do Algoritmo Simplificado")
     
-    st.markdown("""
-    <div class="custom-header">
-        <h1>🎯 Radar RH</h1>
-        <p>Sistema Inteligente de Análise de Rotatividade e Engajamento</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    with st.sidebar:
-        st.title("📋 Navegação")
+    with st.expander("Testar Caso Crítico"):
+        st.markdown("""
+        **Perfil de Teste:**
+        - 7 anos na empresa (veterano)
+        - SEM PDI  
+        - 0 treinamentos
+        - 50 ausências
         
-        page = st.radio(
-            "Selecione uma página:",
-            ["🏠 Início", "📤 Upload de Dados", "📊 Dashboard", "🔍 Análise Detalhada", "📋 Exportar Relatórios"],
-            key="navigation"
-        )
+        **Score esperado:** ~90 pontos (ALTO RISCO)
+        """)
         
-        st.markdown("---")
-        
-        if has_openai():
-            st.markdown('<div class="alert-success">✅ OpenAI Configurada</div>', unsafe_allow_html=True)
-        else:
-            if not HAS_OPENAI:
-                st.markdown('<div class="alert-warning">⚠️ OpenAI não instalada</div>', unsafe_allow_html=True)
-            else:
-                st.markdown('<div class="alert-warning">⚠️ OpenAI não configurada</div>', unsafe_allow_html=True)
-        
-        if not HAS_PDF_SUPPORT:
-            st.markdown('<div class="alert-warning">⚠️ PDF não suportado</div>', unsafe_allow_html=True)
-        
-        if st.session_state.employees:
-            st.markdown("### 📈 Estatísticas")
-            total = len(st.session_state.employees)
-            high_risk = len([e for e in st.session_state.employees if e.score_risco > 60])
+        if st.button("🧪 Executar Teste"):
+            funcionario_teste = Employee(
+                nome="Funcionário Crítico",
+                departamento="TI",
+                cargo="Desenvolvedor",
+                tempo_casa=7.0,
+                participou_pdi=False,
+                num_treinamentos=0,
+                num_ausencias=50
+            )
             
-            st.metric("Total de Colaboradores", total)
-            st.metric("Alto Risco", high_risk, delta=f"{(high_risk/total)*100:.1f}%")
-    
-    if page == "🏠 Início":
-        render_home_page()
-    elif page == "📤 Upload de Dados":
-        render_upload_page()
-    elif page == "📊 Dashboard":
-        render_dashboard_page()
-    elif page == "🔍 Análise Detalhada":
-        render_analysis_page()
-    elif page == "📋 Exportar Relatórios":
-        render_export_page()
+            score = calcular_score_risco(funcionario_teste)
+            nivel = get_risk_level(score)
+            fatores = identificar_fatores_risco(funcionario_teste)
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Score", f"{score:.1f}/100")
+            with col2:
+                st.metric("Nível", nivel)
+            with col3:
+                st.metric("Fatores", len(fatores))
+            
+            st.markdown("**🔍 Breakdown do Cálculo:**")
+            st.markdown(f"""
+            - **Tempo de casa (7 anos):** 0 pontos
+            - **PDI ausente (veterano):** 30 pontos (100 × 0.30)
+            - **Zero treinamentos:** 25 pontos (100 × 0.25)  
+            - **50+ ausências:** 35 pontos (100 × 0.20 + 15 bônus)
+            - **Bônus combinação crítica:** 20 pontos
+            - **TOTAL:** {score:.1f} pontos = **{nivel.upper()} RISCO**
+            """)
+            
+            st.markdown("**🚨 Fatores Detectados:**")
+            for fator in fatores:
+                st.markdown(f"• {fator}")
 
 if __name__ == "__main__":
     main()
+    
+    # Mostrar teste na página inicial
+    if st.session_state.get('current_page') != 'test':
+        with st.expander("🧪 Testar Algoritmo"):
+            teste_algoritmo()
